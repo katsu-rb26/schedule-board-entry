@@ -23,6 +23,13 @@
 <link rel="apple-touch-icon" sizes="167x167" href="icon-167.png">
 <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
 
+<!-- Android／Chrome向け：Webアプリマニフェスト（同じicon-192/512.pngを192x192・512x512で
+     追加生成し、manifest.jsonから参照している）。iOSのapple-touch-iconと同じ理由
+     （GAS側のIndex.htmlはiframeの内側になり最上位ドキュメントに反映されない）で、
+     こちらもこの入口ページ側に置く必要がある -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#C97A1E">
+
 <style>
   :root { --bg: #FBF9F3; --accent: #C97A1E; --accent-text: #8A4F0E; --text-primary: #2B2416; }
   * { box-sizing: border-box; }
@@ -91,11 +98,14 @@
   </noscript>
 
   <script>
-    // ホーム画面のアイコンから起動された場合（iOSのスタンドアロンモード）は、
+    // ホーム画面のアイコンから起動された場合（iOSのスタンドアロンモード、または
+    // Android／ChromeでWebアプリマニフェスト経由でインストールされた状態）は、
     // このページに留まる意味が無いため、これまで通り即座に本来のアプリへ転送する。
-    // 通常のSafariブラウザで開いた場合は、ユーザーが「ホーム画面に追加」を行えるよう
+    // 通常のブラウザで開いた場合は、ユーザーが「ホーム画面に追加」を行えるよう
     // このページに留まり、ボタンをタップした時点で初めて遷移する。
-    if (window.navigator && window.navigator.standalone === true) {
+    var isStandalone = (window.navigator && window.navigator.standalone === true) ||
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    if (isStandalone) {
       location.replace('https://script.google.com/macros/s/AKfycbxnRlfMjkB3Ci973pSNFqWDyCKYqqJzAOsuTJVc8uYl2NVC2q7iKe24rNzhAwYOUUqaIA/exec');
     }
   </script>
