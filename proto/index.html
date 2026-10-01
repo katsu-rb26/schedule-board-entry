@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SB Auth Proto</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="AuthProto">
+<link rel="apple-touch-icon" sizes="180x180" href="../icon-180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="../icon-167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="../icon-152.png">
+<link rel="apple-touch-icon" sizes="120x120" href="../icon-120.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#C97A1E">
+
+<style>
+  :root { --bg: #FBF9F3; --accent: #C97A1E; --accent-text: #8A4F0E; --text-primary: #2B2416; --ok: #2E7D32; --ng: #C62828; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; min-height: 100%;
+    background: var(--bg); color: var(--text-primary);
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 12px 16px; background: var(--accent); color: #fff;
+  }
+  header h1 { margin: 0; font-size: 16px; }
+  header p { margin: 4px 0 0; font-size: 12px; opacity: .9; }
+  main { padding: 12px 16px 40px; max-width: 640px; margin: 0 auto; }
+  section { margin-bottom: 20px; }
+  h2 { font-size: 14px; color: var(--accent-text); border-bottom: 1px solid #e3dcc8; padding-bottom: 4px; }
+  .card {
+    background: #fff; border: 1px solid #e8e1cf; border-radius: 8px; padding: 12px; margin-bottom: 10px;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .email { font-weight: bold; word-break: break-all; }
+  button {
+    font-size: 13px; padding: 8px 14px; border-radius: 6px; border: 1px solid #ccc;
+    background: #fff; color: var(--text-primary); cursor: pointer;
+  }
+  button:active { opacity: .8; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #gBtn { margin-top: 8px; }
+  .note { font-size: 12px; color: #6b6354; line-height: 1.6; }
+  .diagList { list-style: none; margin: 0; padding: 0; }
+  .diagList li {
+    display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #e8e1cf;
+    font-size: 12px; line-height: 1.5;
+  }
+  .badge {
+    flex: 0 0 auto; display: inline-block; min-width: 28px; text-align: center;
+    border-radius: 4px; padding: 2px 6px; font-weight: bold; font-size: 11px; color: #fff;
+  }
+  .badge.OK { background: var(--ok); }
+  .badge.NG { background: var(--ng); }
+  .badge.INFO { background: #6b6354; }
+  .diagBody { flex: 1 1 auto; word-break: break-all; }
+  .diagTime { flex: 0 0 auto; color: #9a927d; font-size: 11px; }
+  code { background: #f1ebda; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SB Auth Proto（試作・確認用）</h1>
+  <p>Schedule Board 本番とは無関係の試作です。入場証（セッショントークン）やIDトークンの値は画面に表示しません。</p>
+</header>
+
+<main>
+
+  <section>
+    <h2>ログイン状態</h2>
+    <div class="card">
+      <div class="row">
+        <div>
+          <div>状態: <span id="statusText">確認中…</span></div>
+          <div class="email" id="emailText"></div>
+        </div>
+        <div>
+          <button id="logoutBtn">ログアウト（トークン削除）</button>
+          <button id="reloadBtn">再読み込み</button>
+        </div>
+      </div>
+      <div id="gBtn"></div>
+      <p class="note" id="modeNote"></p>
+    </div>
+  </section>
+
+  <section>
+    <h2>診断パネル</h2>
+    <div class="card">
+      <ul class="diagList" id="diagList"></ul>
+    </div>
+  </section>
+
+</main>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  "use strict";
+  var CONFIG = window.SB_AUTH_PROTO_CONFIG || {};
+  var SESSION_KEY = "sbAuthProtoSession";
+  var diagListEl = document.getElementById("diagList");
+  var gisInitDone = false;
+
+  function nowStr() {
+    var d = new Date();
+    return d.toTimeString().slice(0, 8);
+  }
+
+  function logDiag(label, status, detail) {
+    var li = document.createElement("li");
+    var badge = document.createElement("span");
+    badge.className = "badge " + status;
+    badge.textContent = status;
+    var body = document.createElement("span");
+    body.className = "diagBody";
+    body.textContent = label + (detail ? "：" + detail : "");
+    var time = document.createElement("span");
+    time.className = "diagTime";
+    time.textContent = nowStr();
+    li.appendChild(badge);
+    li.appendChild(body);
+    li.appendChild(time);
+    diagListEl.insertBefore(li, diagListEl.firstChild);
+  }
+
+  function setStatus(text, email) {
+    document.getElementById("statusText").textContent = text;
+    document.getElementById("emailText").textContent = email || "";
+  }
+
+  // ---- 環境診断 ----
+  function summarizeUA(ua) {
+    return ua && ua.length > 140 ? ua.slice(0, 140) + "…" : (ua || "");
+  }
+
+  function renderEnvDiagnostics() {
+    var dm = false;
+    try { dm = window.matchMedia("(display-mode: standalone)").matches; } catch (e) {}
+    var standalone = (typeof navigator.standalone !== "undefined") ? navigator.standalone : "(非対応)";
+    var pointer = "不明";
+    try {
+      if (window.matchMedia("(pointer: coarse)").matches) pointer = "coarse";
+      else if (window.matchMedia("(pointer: fine)").matches) pointer = "fine";
+    } catch (e) {}
+    var detail = "幅=" + window.innerWidth + "px, display-mode:standalone=" + dm +
+      ", navigator.standalone=" + standalone + ", pointer=" + pointer +
+      ", UA=" + summarizeUA(navigator.userAgent);
+    logDiag("実行環境", "INFO", detail);
+  }
+
+  // ---- localStorage診断 ----
+  function testLocalStorage() {
+    try {
+      var k = "__sbAuthProtoTest__";
+      localStorage.setItem(k, "1");
+      var v = localStorage.getItem(k);
+      localStorage.removeItem(k);
+      if (v === "1") logDiag("localStorage", "OK", "読み書き成功");
+      else logDiag("localStorage", "NG", "読み書き不一致");
+    } catch (e) {
+      logDiag("localStorage", "NG", e && e.message);
+    }
+  }
+
+  function getStoredSession() {
+    try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
+  }
+  function saveSession(token) {
+    try { localStorage.setItem(SESSION_KEY, token); } catch (e) {}
+  }
+  function clearSession() {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  }
+
+  // ---- サーバー通信 ----
+  function fetchApi(bodyObj) {
+    return fetch(CONFIG.APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(bodyObj)
+    }).then(function (res) {
+      if (!res.ok) { throw new Error("HTTP " + res.status); }
+      return res.json();
+    });
+  }
+
+  function classifyFetchError(err, cb) {
+    // 通常のfetchが例外を投げた場合、no-corsで再試行して原因をある程度切り分ける
+    var msg = (err && err.message) || String(err);
+    fetch(CONFIG.APPS_SCRIPT_URL, { method: "POST", mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "echo" }) })
+      .then(function () {
+        cb("CORSブロックの可能性（no-corsでは到達） / " + msg);
+      })
+      .catch(function () {
+        cb("ネットワーク到達不可の可能性 / " + msg);
+      });
+  }
+
+  function testEcho() {
+    return fetchApi({ action: "echo", clientTime: new Date().toISOString(), uaSummary: summarizeUA(navigator.userAgent) })
+      .then(function (res) {
+        if (res && res.ok) {
+          logDiag("通信(echo)", "OK", "serverTime=" + res.serverTime);
+        } else {
+          logDiag("通信(echo)", "NG", "errorCode=" + (res && res.errorCode));
+        }
+      })
+      .catch(function (err) {
+        return new Promise(function (resolve) {
+          classifyFetchError(err, function (detail) {
+            logDiag("通信(echo)", "NG", detail);
+            resolve();
+          });
+        });
+      });
+  }
+
+  // ---- whoami ----
+  function testWhoami(token) {
+    return fetchApi({ action: "whoami", sessionToken: token })
+      .then(function (res) {
+        if (res && res.ok) {
+          logDiag("whoami", "OK", "email=" + res.email + ", 残り" + res.remainingDays + "日");
+          setStatus("ログイン済み（保存済みトークン）", res.email);
+        } else {
+          logDiag("whoami", "NG", "errorCode=" + (res && res.errorCode));
+          clearSession();
+          setStatus("未ログイン", "");
+        }
+      })
+      .catch(function (err) {
+        logDiag("whoami", "NG", (err && err.message) || String(err));
+        setStatus("未ログイン（通信エラー）", "");
+      });
+  }
+
+  // ---- ログイン（GIS） ----
+  window.handleCredentialResponse = function (response) {
+    fetchApi({ action: "login", credential: response.credential })
+      .then(function (res) {
+        if (res && res.ok) {
+          saveSession(res.sessionToken);
+          logDiag("ログイン", "OK", "email=" + res.email);
+          setStatus("ログイン済み", res.email);
+        } else {
+          logDiag("ログイン", "NG", "errorCode=" + (res && res.errorCode));
+          setStatus("ログイン失敗", "");
+        }
+      })
+      .catch(function (err) {
+        logDiag("ログイン", "NG", (err && err.message) || String(err));
+      });
+  };
+
+  function getModeParam() {
+    try {
+      return new URLSearchParams(location.search).get("mode");
+    } catch (e) { return null; }
+  }
+
+  function initGoogleButton() {
+    if (!window.google || !google.accounts || !google.accounts.id) {
+      logDiag("GIS読み込み", "NG", "google.accounts.id が見つかりません");
+      return;
+    }
+    gisInitDone = true;
+    logDiag("GIS読み込み", "OK", "");
+
+    var mode = getModeParam();
+    var opts = {
+      client_id: CONFIG.GOOGLE_CLIENT_ID,
+      callback: window.handleCredentialResponse,
+      ux_mode: "popup"
+    };
+
+    if (mode === "redirect") {
+      opts.ux_mode = "redirect";
+      opts.login_uri = CONFIG.APPS_SCRIPT_URL;
+      document.getElementById("modeNote").textContent =
+        "mode=redirect: login_uriを静的ページと同一オリジンに置けないため、GISのCSRF用cookie検証が機能せず、実際のログイン成功は見込めません（実験的設定）。";
+      logDiag("リダイレクト方式", "INFO", "login_uriが別オリジン(Apps Script)のため、CSRF cookie検証不可。実機確認用に設定のみ有効化。");
+    }
+
+    try {
+      google.accounts.id.initialize(opts);
+      google.accounts.id.renderButton(document.getElementById("gBtn"), { theme: "outline", size: "large", text: "signin_with" });
+    } catch (e) {
+      logDiag("GIS初期化", "NG", (e && e.message) || String(e));
+    }
+  }
+
+  document.getElementById("logoutBtn").addEventListener("click", function () {
+    clearSession();
+    setStatus("未ログイン", "");
+    logDiag("ログアウト", "OK", "トークン削除");
+  });
+  document.getElementById("reloadBtn").addEventListener("click", function () {
+    location.reload();
+  });
+
+  // ---- 初期化 ----
+  renderEnvDiagnostics();
+  testLocalStorage();
+
+  testEcho().then(function () {
+    var token = getStoredSession();
+    if (token) {
+      return testWhoami(token);
+    } else {
+      logDiag("whoami(自動)", "INFO", "保存済みトークンなし");
+      setStatus("未ログイン", "");
+    }
+  });
+
+  // GISスクリプトの読み込み
+  var gisScript = document.createElement("script");
+  gisScript.src = "https://accounts.google.com/gsi/client";
+  gisScript.async = true;
+  gisScript.defer = true;
+  gisScript.onload = initGoogleButton;
+  gisScript.onerror = function () {
+    logDiag("GIS読み込み", "NG", "スクリプト取得に失敗しました");
+  };
+  document.head.appendChild(gisScript);
+  setTimeout(function () {
+    if (!gisInitDone) {
+      logDiag("GIS読み込み", "NG", "タイムアウト（5秒）");
+    }
+  }, 5000);
+
+})();
+</script>
+
+</body>
+</html>

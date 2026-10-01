@@ -1,0 +1,16 @@
+{
+  "name": "SB Auth Proto",
+  "short_name": "AuthProto",
+  "description": "Schedule Board 認証方式の試作（確認用）",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "ja",
+  "background_color": "#FBF9F3",
+  "theme_color": "#C97A1E",
+  "icons": [
+    { "src": "../icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "../icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
