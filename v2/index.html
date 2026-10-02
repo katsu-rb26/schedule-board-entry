@@ -1248,6 +1248,13 @@
     if (sbIsStandalone_()) document.getElementById('standaloneLoginNote').hidden = false;
   }
 
+  // ブラウザのローカル日付をyyyy-MM-dd形式にする（todayStrが不正・欠落していた場合の最終手段）
+  function sbBrowserTodayStr_() {
+    const d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() + 1 < 10 ? '0' : '') + (d.getMonth() + 1) +
+      '-' + (d.getDate() < 10 ? '0' : '') + d.getDate();
+  }
+
   // 旧テンプレート変数と同じ名前・同じ形の値を、getInitData()の応答から設定する
   function sbApplyInitData_(data) {
     EMPLOYEES = JSON.parse(data.employeesJson);
@@ -1256,7 +1263,8 @@
     SCHEDULE_COLORS = JSON.parse(data.scheduleColorsJson);
     MY_TASKS_INITIAL = JSON.parse(data.myTasksJson);
     MY_GROUP_SETTINGS = JSON.parse(data.myGroupSettingsJson);
-    TODAY_STR = data.todayStr;
+    // サーバーの今日の日付を使う。形が不正・欠落していたらブラウザの今日の日付を使う
+    TODAY_STR = /^\d{4}-\d{2}-\d{2}$/.test(data.todayStr || '') ? data.todayStr : sbBrowserTodayStr_();
     CURRENT_EMAIL = data.userEmail;
     IS_MASTER_ADMIN = !!data.isMasterAdmin;
     document.getElementById('appUserBadgeName').textContent = data.userName;
@@ -1264,6 +1272,10 @@
     // サーバー側（server-v2/MasterAdmin.gs）がisAdmin以外にはFORBIDDENを返すため、
     // 管理者以外にはマスタ管理ボタン自体を表示しない
     document.getElementById('openMasterBtn').hidden = !IS_MASTER_ADMIN;
+    // stateはスクリプト読み込み時（TODAY_STRがまだ空文字列の時点）に生成されるため、
+    // ここで改めてdate・monthに実際の値を入れ直す（単純代入のため、上の再代入では反映されない）
+    state.date = TODAY_STR;
+    state.month = TODAY_STR.slice(0, 7);
   }
 
   function sbLoadInitDataAndStart_() {
