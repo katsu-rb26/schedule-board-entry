@@ -352,6 +352,44 @@
       background: var(--accent); color: var(--on-accent); font-weight: 700;
     }
 
+    /* Googleカレンダー連携（メニューの欄）。状態は色だけでなく、文字とアイコンでも区別する */
+    .calendarLinkSection { display: flex; flex-direction: column; gap: 6px; }
+    .calendarLinkSection[hidden] { display: none; }
+    .calendarLinkHeading {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 700; color: var(--text-primary);
+    }
+    .calendarLinkHeading .calendarLinkIcon { color: var(--accent-text); }
+    .calendarLinkIcon { flex: 0 0 auto; width: 16px; height: 16px; }
+    .calendarLinkBadge {
+      align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong);
+      background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 700;
+    }
+    .calendarLinkBadge.linked { background: var(--accent-light); border-color: var(--accent); color: var(--accent-text); }
+    .calendarLinkBadge.expired { border-color: var(--danger); color: var(--danger); }
+    .calendarLinkBadge.unknown { color: var(--text-muted); border-style: dashed; }
+    .calendarLinkBadge .calendarLinkIcon { width: 14px; height: 14px; }
+    .calendarLinkDesc { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+    .calendarLinkBtn { min-height: 44px; width: 100%; font-size: 13px; }
+    .calendarLinkBtn[hidden] { display: none; }
+
+    /* 予定の登録画面：「Googleカレンダーにも追加」の補足説明（チェック欄の下に折り返す） */
+    .calendarSyncRow { flex-wrap: wrap; }
+    .calendarSyncNote { flex: 0 0 100%; margin: 0 0 0 22px; font-size: 11px; color: var(--text-muted); }
+
+    /* Googleカレンダー連携の確認ダイアログ */
+    .calendarLinkList { margin: 0 0 12px; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--text-primary); }
+    .calendarLinkList li { margin-bottom: 4px; }
+    .calendarLinkNotice {
+      background: var(--accent-light); border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 10px 12px; font-size: 12px; line-height: 1.6; color: var(--text-primary);
+    }
+    .calendarLinkNotice p { margin: 0 0 6px; }
+    .calendarLinkNoticeTitle { font-weight: 700; color: var(--accent-text); }
+    .calendarLinkSteps { margin: 6px 0 0; padding-left: 20px; }
+    .calendarLinkSteps li { margin-bottom: 4px; }
+
     @media (max-width: 480px) {
       .appLogo { height: 16px; }
       .appTitle { font-size: 22px; white-space: nowrap; overflow: hidden; }
@@ -925,6 +963,18 @@
     </div>
 
     <hr class="drawerDivider">
+
+    <!-- Googleカレンダー連携（社員マスタに載っている人だけ。viewerには出さない） -->
+    <div class="drawerSection calendarLinkSection" id="calendarLinkSection" hidden>
+      <div class="calendarLinkHeading">
+        <svg class="calendarLinkIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Googleカレンダー連携</span>
+      </div>
+      <span class="calendarLinkBadge" id="calendarLinkBadge"></span>
+      <p class="calendarLinkDesc" id="calendarLinkDesc"></p>
+      <button type="button" class="calendarLinkBtn" id="calendarLinkBtn" hidden></button>
+    </div>
+
     <button id="openMasterBtn">⚙ マスタ管理</button>
     <button id="logoutBtn">⏻ ログアウト</button>
 
@@ -1021,8 +1071,9 @@
         <label>メモ</label>
         <textarea id="fMemo" rows="3" placeholder="詳細メモ（内容欄とは別に記録したい情報があれば）"></textarea>
       </div>
-      <div class="formRow checkboxRow" id="calendarSyncRow" hidden>
+      <div class="formRow checkboxRow calendarSyncRow" id="calendarSyncRow" hidden>
         <input type="checkbox" id="fCalendarSync"><label for="fCalendarSync" style="margin:0;">Googleカレンダーにも追加</label>
+        <small class="calendarSyncNote">チェックを外すと、この予定はカレンダーに入りません。</small>
       </div>
       <div class="errorText" id="fError" hidden></div>
       <div class="modalActions">
@@ -1064,6 +1115,31 @@
         <div class="right">
           <button id="confirmCancelBtn">キャンセル</button>
           <button class="primary danger" id="confirmOkBtn">削除する</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Googleカレンダー連携の確認（「Googleの画面へ進む」を押すまで、Googleへは移動しない） -->
+  <div class="modalOverlay" id="calendarLinkOverlay" hidden>
+    <div class="modalBox" style="width:380px;">
+      <button type="button" class="modalCloseX" id="calendarLinkModalCloseX" aria-label="閉じる">×</button>
+      <h3>Googleカレンダーと連携する</h3>
+      <ul class="calendarLinkList">
+        <li>予定を保存すると、あなたのGoogleカレンダーにも入ります。カレンダーの予定が、Schedule Boardに取り込まれることはありません。</li>
+        <li>他の人が編集した内容も、あなたのカレンダーに反映されます。</li>
+        <li>連携は、メニューからいつでも解除できます。</li>
+      </ul>
+      <div class="calendarLinkNotice">
+        <p class="calendarLinkNoticeTitle">次のGoogleの画面でのお願い</p>
+        <p>『確認されていません』といった警告が出ることがありますが、管理者が作ったアプリなので、次の順に進んでください。</p>
+        <ol class="calendarLinkSteps" id="calendarLinkSteps"></ol>
+      </div>
+      <div class="modalActions">
+        <div></div>
+        <div class="right">
+          <button id="calendarLinkCancelBtn">キャンセル</button>
+          <button class="primary" id="calendarLinkOkBtn">Googleの画面へ進む</button>
         </div>
       </div>
     </div>
@@ -1128,9 +1204,9 @@
   let TODAY_STR = '';
   let CURRENT_EMAIL = '';
   let IS_MASTER_ADMIN = false;
-  // Googleカレンダー連携は第2段階のSB-Serverでは未移植のため、チェックボックスを常に非表示にする。
-  // 将来連携を実装する段階になったら、このtrueへの変更だけで元の表示動作に戻せる。
-  const CALENDAR_ENABLED = false;
+  // ログイン中の本人のrole（'member' = 社員マスタに載っている人、'viewer' = 閲覧編集ユーザー）。
+  // login・whoamiの応答から設定する。Googleカレンダー連携の欄とチェック欄の出し分けに使う
+  let CURRENT_ROLE = '';
 
   // ==== v2追加：入場証の保存（localStorage。使えない場合はメモリのみで保持） ====
   const SB_SESSION_STORAGE_KEY = 'sbSessionToken';
@@ -1183,7 +1259,8 @@
     'getSchedulesForMonth', 'getAttendanceForMonth', 'upsertSchedule', 'deleteSchedule',
     'restoreSchedule', 'saveAttendance', 'updateEmployeeNote', 'getMyTasks', 'saveMyTasks',
     'getMyGroupSettings', 'saveMyCustomGroups', 'setMyDefaultGroup', 'getThemeModePref',
-    'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData'
+    'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
+    'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar'
   ];
 
   // action="call"でfnを1回呼ぶ。BUSYは1秒待って1回だけ再試行する。
@@ -1350,6 +1427,7 @@
     sbCall_('getInitData', [], function (data) {
       if (!sbIsLoginGenCurrent_(gen)) return;
       sbApplyInitData_(data);
+      refreshCalendarLinkStatus_(true);
       sbSetBootPhaseText_('予定を読み込んでいます…');
       init(function () {
         // 初回の予定・出退勤取得が完了した（成功・失敗どちらでも）時点で、進行中の表示を消す
@@ -1376,6 +1454,7 @@
         if (!sbIsLoginGenCurrent_(gen)) return; // 40秒タイムアウト後の遅延応答は無視する
         if (res && res.ok) {
           sbSaveSessionToken_(res.sessionToken);
+          CURRENT_ROLE = res.role || '';
           sbSetBootPhaseText_('メンバーと設定を読み込んでいます…');
           sbLoadInitDataAndStart_(gen);
           return;
@@ -1430,6 +1509,7 @@
       .then(function (res) {
         if (!sbIsLoginGenCurrent_(gen)) return;
         if (res && res.ok) {
+          CURRENT_ROLE = res.role || '';
           sbSetBootPhaseText_('メンバーと設定を読み込んでいます…');
           sbLoadInitDataAndStart_(gen);
         } else {
@@ -1444,6 +1524,172 @@
         sbShowLoginScreen_();
       });
   })();
+
+  // ==== Googleカレンダー連携（メニューの欄・確認ダイアログ・連携状態の管理） ====
+  // 画面に出す文言はここに集める（Googleの画面の手順③は仮の文言。実際の画面で確認して直す）
+  const CALENDAR_LINK_GOOGLE_STEPS = [
+    '画面の「詳細」を押す',
+    '「Schedule Board（安全ではないページ）に移動」を押す',
+    'カレンダーの予定を表示・編集する許可にチェックを入れて「続行」を押す',
+    '「連携が完了しました」と出たら、このページを閉じて戻る'
+  ];
+  const CALENDAR_LINK_FAILED_TEXT = '連携を始められませんでした。管理者に連絡してください。';
+  const CALENDAR_NOTICE_SAVE = {
+    failed: '予定は保存しました。ただし、Googleカレンダーには反映できませんでした。',
+    expired: '予定は保存しました。連携の期限が切れているため、カレンダーには反映されていません。メニューから再連携してください。'
+  };
+  const CALENDAR_NOTICE_DELETE = {
+    failed: '予定は削除しました。ただし、Googleカレンダーからは削除できませんでした。',
+    expired: '予定は削除しました。連携の期限が切れているため、カレンダーからは削除されていません。メニューから再連携してください。'
+  };
+  // 連携状態の取り直しは、この間隔より短い連続呼び出しを間引く（focusとvisibilitychangeが同時に来る等）
+  const CALENDAR_STATUS_MIN_INTERVAL_MS = 3000;
+  const CALENDAR_ICON_CHECK = '<svg class="calendarLinkIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12.5l2.5 2.5L16 9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const CALENDAR_ICON_WARN = '<svg class="calendarLinkIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v5M12 18v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  // メニューの欄の表示。status: unknown＝取得できなかった、unlinked＝未連携、linked＝連携済み、expired＝期限切れ
+  const CALENDAR_LINK_VIEWS = {
+    unknown: { badge: '確認できません', icon: '', cls: 'unknown', desc: '連携の状態を取得できませんでした。メニューを開き直すと、もう一度確認します。', button: '', primary: false },
+    unlinked: { badge: '未連携', icon: '', cls: 'unlinked', desc: '連携すると、予定がGoogleカレンダーにも入ります。', button: '連携する', primary: true },
+    linked: { badge: '連携済み', icon: CALENDAR_ICON_CHECK, cls: 'linked', desc: '他の人が編集した内容も、あなたのカレンダーに反映されます。', button: '連携を解除する', primary: false },
+    expired: { badge: '再連携が必要です', icon: CALENDAR_ICON_WARN, cls: 'expired', desc: '連携の有効期限が切れました。もう一度連携するまで、カレンダーは更新されません。', button: 'もう一度連携する', primary: true }
+  };
+
+  // getCalendarLinkStatusの応答。null は「取得できていない」（その間は欄も、チェック欄も出さない）
+  let calendarLinkStatus_ = null;
+  let calendarLinkFetchedAt_ = 0;
+  let calendarLinkBusy_ = false;
+  // 編集中の予定の、保存されている連携フラグ（H列）。チェック欄が出ないときの送り値に使う
+  let editingCalendarSync_ = true;
+
+  // 連携済み（キーがあり、期限切れでない）か。チェック欄を出す条件
+  function calendarLinkedNow_() {
+    return !!calendarLinkStatus_ && calendarLinkStatus_.linked === true && calendarLinkStatus_.expired !== true;
+  }
+
+  // 社員マスタ上で、そのメンバーの行のメールがログイン中の本人か（＝持ち主が自分か）
+  function isSelfEmployee_(name) {
+    const emp = EMPLOYEES.filter(function (e) { return e.name === name; })[0];
+    return !!(emp && emp.email && CURRENT_EMAIL && emp.email.toLowerCase() === CURRENT_EMAIL.toLowerCase());
+  }
+
+  // 連携状態を取り直す。force=falseのときは、直前の取得から短時間なら間引く
+  function refreshCalendarLinkStatus_(force) {
+    if (!CURRENT_EMAIL || CURRENT_ROLE !== 'member') return;
+    if (!force && Date.now() - calendarLinkFetchedAt_ < CALENDAR_STATUS_MIN_INTERVAL_MS) return;
+    calendarLinkFetchedAt_ = Date.now();
+    sbCall_('getCalendarLinkStatus', [], function (status) {
+      calendarLinkStatus_ = { linked: !!status.linked, expired: !!status.expired };
+      renderCalendarLink_();
+    }, function (err) {
+      console.error('getCalendarLinkStatus', err && err.errorCode);
+      calendarLinkStatus_ = null;
+      renderCalendarLink_();
+    });
+  }
+
+  function renderCalendarLink_() {
+    const section = document.getElementById('calendarLinkSection');
+    const badge = document.getElementById('calendarLinkBadge');
+    const desc = document.getElementById('calendarLinkDesc');
+    const btn = document.getElementById('calendarLinkBtn');
+    const s = calendarLinkStatus_;
+    const view = !s ? CALENDAR_LINK_VIEWS.unknown
+      : !s.linked ? CALENDAR_LINK_VIEWS.unlinked
+      : s.expired ? CALENDAR_LINK_VIEWS.expired
+      : CALENDAR_LINK_VIEWS.linked;
+    section.hidden = CURRENT_ROLE !== 'member';
+    badge.className = 'calendarLinkBadge ' + view.cls;
+    badge.innerHTML = view.icon + escapeHtml(view.badge);
+    desc.textContent = view.desc;
+    btn.hidden = !view.button;
+    btn.textContent = view.button;
+    btn.className = 'calendarLinkBtn' + (view.primary ? ' primary' : '');
+    updateCalendarSyncVisibility(); // 連携状態が変わったら、予定の登録画面のチェック欄も出し分け直す
+  }
+
+  // 「連携する」「もう一度連携する」：まず確認を出す（いきなりGoogleへは移動しない）
+  function openCalendarLinkDialog_() {
+    const steps = document.getElementById('calendarLinkSteps');
+    steps.innerHTML = '';
+    CALENDAR_LINK_GOOGLE_STEPS.forEach(function (text) {
+      const li = document.createElement('li');
+      li.textContent = text;
+      steps.appendChild(li);
+    });
+    document.getElementById('calendarLinkOverlay').hidden = false;
+  }
+
+  function closeCalendarLinkDialog_() {
+    document.getElementById('calendarLinkOverlay').hidden = true;
+  }
+
+  // 「Googleの画面へ進む」。クリックの中で先に空のタブを開いておき（後から開くと、iPhoneの
+  // ポップアップブロックに当たるため）、URLを取得できたらそのタブを移動させる。
+  // 開けなかった（window.openがnull）ときは、同じタブで移動する
+  function beginCalendarLink_() {
+    if (calendarLinkBusy_) return;
+    calendarLinkBusy_ = true;
+    const win = window.open('', '_blank');
+    sbCall_('startCalendarLink', [], function (url) {
+      calendarLinkBusy_ = false;
+      if (typeof url !== 'string' || url.indexOf('https://accounts.google.com/') !== 0) {
+        if (win) win.close();
+        showToast(CALENDAR_LINK_FAILED_TEXT);
+        return;
+      }
+      if (win) win.location.href = url;
+      else window.location.assign(url);
+    }, function (err) {
+      calendarLinkBusy_ = false;
+      console.error('startCalendarLink', err && err.errorCode);
+      if (win) win.close();
+      showToast(CALENDAR_LINK_FAILED_TEXT);
+    });
+  }
+
+  function confirmUnlinkCalendar_() {
+    showConfirm('連携を解除しますか？ 解除しても、すでにGoogleカレンダーに入った予定はそのまま残ります。', function () {
+      sbCall_('unlinkCalendar', [], function () {
+        refreshCalendarLinkStatus_(true);
+      }, showRunError);
+    }, '解除する');
+  }
+
+  // 予定の登録画面のチェック欄：連携済みで、登録対象（選んだメンバー）に自分が含まれるときだけ出す
+  function updateCalendarSyncVisibility() {
+    const isMulti = document.getElementById('fMultiMode').checked;
+    const names = isMulti
+      ? Array.from(document.querySelectorAll('#multiEmployeeList input:checked')).map(function (el) { return el.value; })
+      : [document.getElementById('fEmployee').value];
+    const hasSelf = names.some(function (n) { return isSelfEmployee_(n); });
+    document.getElementById('calendarSyncRow').hidden = !(calendarLinkedNow_() && hasSelf);
+  }
+
+  // 1行ぶんのH列の値（calendarSync）を決める。チェック欄が出ていて、その行が自分の予定のときだけ画面の値を使う。
+  // それ以外は、新規は true、編集は既存の値のまま（持ち主の判定はサーバーが行う）
+  function calendarSyncForRow_(employeeName, isNew, existingValue) {
+    const fieldShown = !document.getElementById('calendarSyncRow').hidden;
+    if (fieldShown && isSelfEmployee_(employeeName)) return document.getElementById('fCalendarSync').checked;
+    return isNew ? true : existingValue;
+  }
+
+  // 保存・削除の結果から、Googleカレンダーに関する注意文を決める。持ち主が自分の予定のときだけ対象。
+  // failed は skipped_expired より優先する。何も出さないときは空文字
+  function calendarNoticeFor_(results, isDelete) {
+    const texts = isDelete ? CALENDAR_NOTICE_DELETE : CALENDAR_NOTICE_SAVE;
+    const mine = (results || [])
+      .filter(function (r) { return r && r.employeeName && isSelfEmployee_(r.employeeName); })
+      .map(function (r) { return r.calendar && r.calendar.result; });
+    if (mine.indexOf('failed') !== -1) return texts.failed;
+    if (mine.indexOf('skipped_expired') !== -1) return texts.expired;
+    return '';
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) refreshCalendarLinkStatus_(false);
+  });
+  window.addEventListener('pageshow', function () { refreshCalendarLinkStatus_(false); });
+  window.addEventListener('focus', function () { refreshCalendarLinkStatus_(false); });
 
   const GRID_START_MIN = 8 * 60;
   const GRID_END_MIN = 21 * 60;
@@ -1985,16 +2231,13 @@
       document.getElementById('timeFields').style.display = this.checked ? 'none' : '';
     });
     document.getElementById('fEmployee').addEventListener('change', updateCalendarSyncVisibility);
+    document.getElementById('multiEmployeeList').addEventListener('change', updateCalendarSyncVisibility);
     document.getElementById('fMultiMode').addEventListener('change', function () {
       const on = this.checked;
       document.getElementById('employeeFieldRow').hidden = on;
       document.getElementById('multiEmployeeRow').hidden = !on;
-      if (on) {
-        populateMultiEmployeeList();
-        document.getElementById('calendarSyncRow').hidden = !CALENDAR_ENABLED; // v2ではCALENDAR_ENABLED=falseのため常に非表示
-      } else {
-        updateCalendarSyncVisibility();
-      }
+      if (on) populateMultiEmployeeList();
+      updateCalendarSyncVisibility();
     });
     document.getElementById('fMultiDateMode').addEventListener('change', function () {
       const on = this.checked;
@@ -2024,6 +2267,18 @@
         saveThemeMode_(mode);
       });
     });
+
+    document.getElementById('calendarLinkBtn').addEventListener('click', function () {
+      // 連携済み（期限切れでない）なら解除、それ以外（未連携・期限切れ）は連携の確認へ
+      if (calendarLinkedNow_()) confirmUnlinkCalendar_();
+      else openCalendarLinkDialog_();
+    });
+    document.getElementById('calendarLinkOkBtn').addEventListener('click', function () {
+      closeCalendarLinkDialog_();
+      beginCalendarLink_();
+    });
+    document.getElementById('calendarLinkCancelBtn').addEventListener('click', closeCalendarLinkDialog_);
+    wireModalClose_('calendarLinkOverlay', 'calendarLinkModalCloseX', closeCalendarLinkDialog_);
 
     document.getElementById('openMasterBtn').addEventListener('click', openMasterModal);
     document.getElementById('closeMasterBtn').addEventListener('click', closeMasterModal);
@@ -2253,6 +2508,7 @@
 
   // ==== ☰ドロワー ====
   function openDrawer_() {
+    refreshCalendarLinkStatus_(false); // 取得できていなかった場合も、開いたときにもう一度確認する（間引きあり）
     document.getElementById('drawerScrim').classList.add('open');
     document.getElementById('drawer').classList.add('open');
     document.getElementById('drawer').setAttribute('aria-hidden', 'false');
@@ -3608,7 +3864,9 @@
     document.getElementById('fMeetingUrl').value = schedule ? schedule.meetingUrl : '';
     document.getElementById('fMemo').value = schedule ? schedule.memo : '';
     setSelectedColor(schedule ? (schedule.color || '') : '');
-    document.getElementById('fCalendarSync').checked = schedule ? schedule.calendarSync : false;
+    // 新規は初期値ON。編集は保存されている連携フラグ（H列の値）を初期値にする
+    editingCalendarSync_ = schedule ? schedule.calendarSync === true : true;
+    document.getElementById('fCalendarSync').checked = editingCalendarSync_;
     document.getElementById('deleteBtn').hidden = !schedule;
     document.getElementById('fError').hidden = true;
     updateCalendarSyncVisibility();
@@ -3617,14 +3875,6 @@
 
   function closeScheduleModal() {
     document.getElementById('scheduleModalOverlay').hidden = true;
-  }
-
-  function updateCalendarSyncVisibility() {
-    const empName = document.getElementById('fEmployee').value;
-    const emp = EMPLOYEES.filter(function (e) { return e.name === empName; })[0];
-    const isOwner = emp && emp.email && emp.email === CURRENT_EMAIL.toLowerCase();
-    document.getElementById('calendarSyncRow').hidden = !CALENDAR_ENABLED || !isOwner;
-    if (!isOwner) document.getElementById('fCalendarSync').checked = false;
   }
 
   function populateMultiEmployeeList() {
@@ -3659,8 +3909,7 @@
       color: selectedColorKey,
       location: document.getElementById('fLocation').value,
       meetingUrl: document.getElementById('fMeetingUrl').value,
-      memo: document.getElementById('fMemo').value,
-      calendarSync: document.getElementById('fCalendarSync').checked
+      memo: document.getElementById('fMemo').value
     };
 
     // よくある入力ミス（終了が開始以前・15分単位外）は、楽観的に反映してモーダルを閉じる前に弾く
@@ -3689,22 +3938,26 @@
       if (!isMultiDate && !/^\d{4}-\d{2}-\d{2}$/.test(base.date || '')) { showFormError({ message: '日付の形式が不正です' }); return; }
 
       // 社員×日付の全組み合わせ分のレコードを作る（複数日のみ・複数人のみ・両方、いずれも同じ処理で済む）
+      // 行ごとのcalendarSyncは、チェック欄が効くのは自分の行だけ（他の行は、新規はtrueで、サーバーが持ち主の判定を行う）
       const combos = [];
       participants.forEach(function (name) {
-        dates.forEach(function (date) { combos.push({ employeeName: name, date: date }); });
+        dates.forEach(function (date) { combos.push({ employeeName: name, date: date, calendarSync: calendarSyncForRow_(name, true, true) }); });
       });
 
       // 楽観的更新：サーバーの応答を待たず先に全件分を仮表示し、保存は裏で進める
       const tempIds = combos.map(function (combo, i) {
         const tempId = 'temp-' + Date.now() + '-' + i;
-        mergeScheduleIntoState_(buildOptimisticSchedule_(Object.assign({ id: tempId, employeeName: combo.employeeName }, base, { date: combo.date })));
+        mergeScheduleIntoState_(buildOptimisticSchedule_(Object.assign({ id: tempId, employeeName: combo.employeeName, calendarSync: combo.calendarSync }, base, { date: combo.date })));
         return tempId;
       });
       closeScheduleModal();
       state.saving = true;
-      saveBatchSchedules(combos, base, 0, tempIds, function () {
+      saveBatchSchedules(combos, base, 0, tempIds, [], function (results) {
         state.saving = false;
-        if (isMulti && isMultiDate) {
+        const calendarNotice = calendarNoticeFor_(results, false);
+        if (calendarNotice) {
+          showToast(calendarNotice);
+        } else if (isMulti && isMultiDate) {
           showToast(participants.length + '人 × ' + dates.length + '日分、計' + combos.length + '件の予定を登録しました');
         } else if (isMulti) {
           showToast(participants.length + '人分の予定を登録しました');
@@ -3722,7 +3975,10 @@
 
     const isNew = !state.editingId;
     const tempId = isNew ? ('temp-' + Date.now()) : state.editingId;
-    const schedule = Object.assign({ id: isNew ? null : state.editingId, employeeName: document.getElementById('fEmployee').value }, base);
+    const employeeName = document.getElementById('fEmployee').value;
+    const schedule = Object.assign({ id: isNew ? null : state.editingId, employeeName: employeeName }, base, {
+      calendarSync: calendarSyncForRow_(employeeName, isNew, editingCalendarSync_)
+    });
     if (!schedule.employeeName) { showFormError({ message: 'メンバーを選択してください' }); return; }
     if (!sbEmployeeExists_(schedule.employeeName)) { showFormError({ message: '社員マスタに存在しないメンバーです: ' + schedule.employeeName }); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(schedule.date || '')) { showFormError({ message: '日付の形式が不正です' }); return; }
@@ -3740,6 +3996,8 @@
         state.saving = false;
         if (isNew) removeScheduleFromState_(tempId);
         mergeScheduleIntoState_(result);
+        const calendarNotice = calendarNoticeFor_([result], false);
+        if (calendarNotice) showToast(calendarNotice);
       })
       .withFailureHandler(function (err) {
         state.saving = false;
@@ -3763,15 +4021,17 @@
   // combos: [{employeeName, date}, ...]。複数人のみ・複数日のみ・両方（全組み合わせ）のいずれも
   // このcombos配列に正規化した上で、1件ずつ順番に保存する（並列に投げるとシートへの書き込み行が
   // ぶつかる可能性があるため）
-  function saveBatchSchedules(combos, base, idx, tempIds, onDone, onError) {
-    if (idx >= combos.length) { onDone(); return; }
+  // results には、保存できた予定（calendar.resultを含む）を順に溜めて、onDone(results) で渡す
+  function saveBatchSchedules(combos, base, idx, tempIds, results, onDone, onError) {
+    if (idx >= combos.length) { onDone(results); return; }
     const combo = combos[idx];
-    const schedule = Object.assign({ id: null, employeeName: combo.employeeName }, base, { date: combo.date });
+    const schedule = Object.assign({ id: null, employeeName: combo.employeeName, calendarSync: combo.calendarSync }, base, { date: combo.date });
     google.script.run
       .withSuccessHandler(function (result) {
         removeScheduleFromState_(tempIds[idx]);
         mergeScheduleIntoState_(result);
-        saveBatchSchedules(combos, base, idx + 1, tempIds, onDone, onError);
+        results.push(result);
+        saveBatchSchedules(combos, base, idx + 1, tempIds, results, onDone, onError);
       })
       .withFailureHandler(onError)
       .upsertSchedule(schedule);
@@ -3795,7 +4055,11 @@
         .withSuccessHandler(function (result) {
           state.saving = false;
           if (result && result.deletedId) {
-            showToast('予定を削除しました', '元に戻す', function () { restoreDeletedSchedule(result.deletedId); });
+            // 削除の応答には持ち主の名前が無いため、削除前の予定から持ち主を判定する
+            const calendarNotice = removedSchedule
+              ? calendarNoticeFor_([{ employeeName: removedSchedule.employeeName, calendar: result.calendar }], true)
+              : '';
+            showToast(calendarNotice || '予定を削除しました', '元に戻す', function () { restoreDeletedSchedule(result.deletedId); });
           }
         })
         .withFailureHandler(function (err) {
