@@ -799,6 +799,10 @@
       animation: loginSpin 0.8s linear infinite;
     }
     @keyframes loginSpin { to { transform: rotate(360deg); } }
+    /* 回転アニメーションに敏感な利用者向け：回転させず、静止した状態（アクセント色の円弧）のまま表示する */
+    @media (prefers-reduced-motion: reduce) {
+      .loginSpinner { animation: none; }
+    }
     #gisButtonContainer { min-height: 44px; display: flex; align-items: center; justify-content: center; }
     .loginNote {
       max-width: 360px; font-size: 12.5px; line-height: 1.7; color: var(--text-secondary);
@@ -807,6 +811,8 @@
     .loginError {
       max-width: 360px; font-size: 13px; color: var(--danger); min-height: 1.4em;
     }
+    /* 10秒以上応答がない場合にbootLoadingText/loginProgressTextの下へ追加表示する注意文 */
+    .loginWarnText { color: var(--accent-text); }
   </style>
 </head>
 <body>
@@ -814,7 +820,8 @@
   <!-- v2追加：起動時の読み込み画面（保存済み入場証の確認中、getInitData取得中に表示） -->
   <div id="bootLoadingScreen">
     <div class="loginSpinner" aria-hidden="true"></div>
-    <p class="loginNote" id="bootLoadingText">読み込み中…</p>
+    <p class="loginNote" id="bootLoadingText" role="status" aria-live="polite">読み込み中…</p>
+    <p class="loginNote loginWarnText" id="bootLoadingWarnText" role="status" aria-live="polite" hidden>時間がかかっています。そのままお待ちください。</p>
   </div>
 
   <!-- v2追加：ログイン画面（未ログイン・入場証が無効なときに表示） -->
@@ -1248,6 +1255,65 @@
     if (sbIsStandalone_()) document.getElementById('standaloneLoginNote').hidden = false;
   }
 
+  function sbShowProcessingScreen_() {
+    document.getElementById('loginScreen').hidden = true;
+    document.getElementById('bootLoadingScreen').hidden = false;
+  }
+
+  // ==== v2追加：ログイン～初期データ～初回の予定取得までを1つの「処理中」として扱う進行管理。
+  // 二重実行防止（busyフラグ）、10秒/40秒の経過表示、40秒タイムアウト後に届く遅延応答の
+  // 無視（世代カウンタ）をまとめて担う。SB_LOGIN_WARN_MS/SB_LOGIN_TIMEOUT_MSは、
+  // テストだけ(window.__SB_TEST_LOGIN_*__)で短縮できる（本番の既定値は変えない） ====
+  let sbLoginBusy_ = false;
+  let sbLoginGen_ = 0;
+  let sbLoginWarnTimer_ = null;
+  let sbLoginTimeoutTimer_ = null;
+  const SB_LOGIN_WARN_MS = typeof window.__SB_TEST_LOGIN_WARN_MS__ === 'number' ? window.__SB_TEST_LOGIN_WARN_MS__ : 10000;
+  const SB_LOGIN_TIMEOUT_MS = typeof window.__SB_TEST_LOGIN_TIMEOUT_MS__ === 'number' ? window.__SB_TEST_LOGIN_TIMEOUT_MS__ : 40000;
+
+  function sbSetBootPhaseText_(text) {
+    const el = document.getElementById('bootLoadingText');
+    if (el) el.textContent = text;
+  }
+  function sbSetBootWarnVisible_(visible) {
+    const el = document.getElementById('bootLoadingWarnText');
+    if (el) el.hidden = !visible;
+  }
+  function sbClearLoginTimers_() {
+    if (sbLoginWarnTimer_) { clearTimeout(sbLoginWarnTimer_); sbLoginWarnTimer_ = null; }
+    if (sbLoginTimeoutTimer_) { clearTimeout(sbLoginTimeoutTimer_); sbLoginTimeoutTimer_ = null; }
+    sbSetBootWarnVisible_(false);
+  }
+  function sbIsLoginGenCurrent_(gen) { return gen === sbLoginGen_; }
+
+  // 処理開始。以後の非同期コールバックは、戻り値（世代番号）が現在の世代と一致する間だけ結果を反映する
+  function sbBeginLoginAttempt_() {
+    sbLoginBusy_ = true;
+    sbLoginGen_++;
+    const gen = sbLoginGen_;
+    sbClearLoginTimers_();
+    sbLoginWarnTimer_ = setTimeout(function () {
+      if (!sbIsLoginGenCurrent_(gen)) return;
+      sbSetBootWarnVisible_(true);
+    }, SB_LOGIN_WARN_MS);
+    sbLoginTimeoutTimer_ = setTimeout(function () {
+      if (!sbIsLoginGenCurrent_(gen)) return;
+      sbLoginGen_++; // この世代はここで終了。以後届く応答はすべて無視する
+      sbLoginBusy_ = false;
+      sbClearLoginTimers_();
+      sbShowLoginScreen_();
+      sbShowLoginError_('うまくいかなかったようです。もう一度お試しください');
+    }, SB_LOGIN_TIMEOUT_MS);
+    return gen;
+  }
+  // 処理の正常終了（成功・失敗問わず）。40秒タイムアウトが既に発火していればfalseを返す
+  function sbEndLoginAttempt_(gen) {
+    if (!sbIsLoginGenCurrent_(gen)) return false;
+    sbLoginBusy_ = false;
+    sbClearLoginTimers_();
+    return true;
+  }
+
   // ブラウザのローカル日付をyyyy-MM-dd形式にする（todayStrが不正・欠落していた場合の最終手段）
   function sbBrowserTodayStr_() {
     const d = new Date();
@@ -1278,33 +1344,53 @@
     state.month = TODAY_STR.slice(0, 7);
   }
 
-  function sbLoadInitDataAndStart_() {
+  // getInitData取得→(アプリ初期化)→初回の予定・出退勤取得まで進める。
+  // genは呼び出し元のsbBeginLoginAttempt_()の戻り値。40秒タイムアウト後に届いた遅延応答は無視する
+  function sbLoadInitDataAndStart_(gen) {
     sbCall_('getInitData', [], function (data) {
+      if (!sbIsLoginGenCurrent_(gen)) return;
       sbApplyInitData_(data);
-      document.getElementById('bootLoadingScreen').hidden = true;
-      document.getElementById('loginScreen').hidden = true;
-      init();
+      sbSetBootPhaseText_('予定を読み込んでいます…');
+      init(function () {
+        // 初回の予定・出退勤取得が完了した（成功・失敗どちらでも）時点で、進行中の表示を消す
+        if (!sbEndLoginAttempt_(gen)) return;
+        document.getElementById('bootLoadingScreen').hidden = true;
+        document.getElementById('loginScreen').hidden = true;
+      });
     }, function () {
+      if (!sbIsLoginGenCurrent_(gen)) return;
+      sbEndLoginAttempt_(gen);
       sbShowLoginError_('読み込みに失敗しました。もう一度お試しください');
       sbShowLoginScreen_();
     });
   }
 
   window.sbHandleCredentialResponse_ = function (response) {
+    if (sbLoginBusy_) return; // 処理中にコールバックが重ねて呼ばれても二重実行しない
+    const gen = sbBeginLoginAttempt_();
     sbShowLoginError_('');
+    sbShowProcessingScreen_();
+    sbSetBootPhaseText_('本人を確認しています…');
     sbFetch_({ action: 'login', credential: response.credential })
       .then(function (res) {
+        if (!sbIsLoginGenCurrent_(gen)) return; // 40秒タイムアウト後の遅延応答は無視する
         if (res && res.ok) {
           sbSaveSessionToken_(res.sessionToken);
-          sbLoadInitDataAndStart_();
+          sbSetBootPhaseText_('メンバーと設定を読み込んでいます…');
+          sbLoadInitDataAndStart_(gen);
           return;
         }
+        sbEndLoginAttempt_(gen);
+        sbShowLoginScreen_();
         const code = res && res.errorCode;
         if (code === 'NOT_ALLOWED') sbShowLoginError_('このアカウントは登録されていません。管理者にご連絡ください');
         else if (code === 'RATE_LIMITED') sbShowLoginError_('しばらくしてからお試しください');
         else sbShowLoginError_('ログインできませんでした。もう一度お試しください');
       })
       .catch(function () {
+        if (!sbIsLoginGenCurrent_(gen)) return;
+        sbEndLoginAttempt_(gen);
+        sbShowLoginScreen_();
         sbShowLoginError_('ログインできませんでした。もう一度お試しください');
       });
   };
@@ -1332,16 +1418,31 @@
   });
 
   // 起動時：保存済みの入場証があればwhoamiで確認し、有効ならgetInitDataへ進む。
-  // 無ければ（または無効なら）ログイン画面を表示する。
+  // 無ければ（または無効なら）ログイン画面を表示する。bootLoadingScreenは初期状態から
+  // 表示済みのため、ここではまだ表示を切り替えず、文言だけを段階に合わせて更新する
+  // （ログインボタンが一瞬表示されてすぐ消える、ちらつきを防ぐため）。
   (function sbBoot_() {
     const token = sbGetSessionToken_();
     if (!token) { sbShowLoginScreen_(); return; }
+    const gen = sbBeginLoginAttempt_();
+    sbSetBootPhaseText_('本人を確認しています…');
     sbFetch_({ action: 'whoami', sessionToken: token })
       .then(function (res) {
-        if (res && res.ok) sbLoadInitDataAndStart_();
-        else { sbClearSessionToken_(); sbShowLoginScreen_(); }
+        if (!sbIsLoginGenCurrent_(gen)) return;
+        if (res && res.ok) {
+          sbSetBootPhaseText_('メンバーと設定を読み込んでいます…');
+          sbLoadInitDataAndStart_(gen);
+        } else {
+          sbClearSessionToken_();
+          sbEndLoginAttempt_(gen);
+          sbShowLoginScreen_();
+        }
       })
-      .catch(function () { sbShowLoginScreen_(); });
+      .catch(function () {
+        if (!sbIsLoginGenCurrent_(gen)) return;
+        sbEndLoginAttempt_(gen);
+        sbShowLoginScreen_();
+      });
   })();
 
   const GRID_START_MIN = 8 * 60;
@@ -1507,19 +1608,22 @@
   // キャッシュ済みなら即座にonUpdateを呼んで体感遅延ゼロで表示し、キャッシュが無ければ
   // ローディング表示を出しつつ取得する。キャッシュがあっても古ければ（MONTH_CACHE_STALE_MS超）
   // 裏で静かに再取得し、届いたら再度onUpdateを呼んで差分を反映する（stale-while-revalidate）
-  function ensureMonthData_(monthKey, onUpdate) {
+  // onSettledは省略可。渡した場合、成功・失敗どちらでも（キャッシュ即時表示の場合は同期的に）
+  // 必ず1回呼ばれる。起動直後の「進行中」表示を、結果の成否に関わらず消すために使う
+  function ensureMonthData_(monthKey, onUpdate, onSettled) {
     const cached = monthCache.get(monthKey);
     if (cached) {
       onUpdate(cached);
       if (Date.now() - cached.fetchedAt > MONTH_CACHE_STALE_MS) {
         fetchMonth_(monthKey).then(onUpdate, function () { /* showRunErrorはfetchMonth_側で表示済み */ });
       }
+      if (onSettled) onSettled();
       return;
     }
     showLoadingIndicator_();
     fetchMonth_(monthKey).then(
-      function (entry) { hideLoadingIndicator_(); onUpdate(entry); },
-      function () { hideLoadingIndicator_(); }
+      function (entry) { hideLoadingIndicator_(); onUpdate(entry); if (onSettled) onSettled(); },
+      function () { hideLoadingIndicator_(); if (onSettled) onSettled(); }
     );
   }
 
@@ -1583,7 +1687,9 @@
   }
 
   // ==== 初期化 ====
-  function init() {
+  // onInitialLoadは省略可。渡した場合、起動直後の予定・出退勤の初回取得が完了した時点
+  // （成功・失敗どちらでも）で1回呼ばれる（ログイン時の「進行中」表示を消すために使う）
+  function init(onInitialLoad) {
     populateGroupSelect();
     populateEmployeeList();
     document.getElementById('dateInput').value = state.date;
@@ -1596,7 +1702,7 @@
     bindScheduleTextRecalc_();
     syncHeaderState_(); // サーバーからの初回応答を待たず、期間タイトル・週ストリップを先に表示する
     initThemeMode_();
-    loadSchedules();
+    loadSchedules(onInitialLoad);
   }
 
   // 共有グループ（Kicks／プランナー等、事業部ベース）と、本人専用のオリジナルグループ
@@ -1988,7 +2094,7 @@
   // ==== データ読み込み ====
   // 日表示も（月表示と同じく）月単位でまとめて取得し、クライアント側でその日の分だけ切り出す。
   // 同じ月に留まっている限りキャッシュから即表示でき、日ごとにサーバーへ問い合わせずに済む
-  function loadSchedules() {
+  function loadSchedules(onDone) {
     const monthKey = state.date.slice(0, 7);
     const targetDate = state.date;
     ensureMonthData_(monthKey, function (entry) {
@@ -1997,7 +2103,7 @@
       state.schedules = entry.schedules.filter(function (s) { return s.date === targetDate; });
       state.attendance = entry.attendance.filter(function (a) { return a.date === targetDate; });
       renderGantt();
-    });
+    }, onDone);
   }
 
   // 保存・削除・復元のたびにgetSchedulesForMonthで全件取り直すと、その分だけ通信が増えて
