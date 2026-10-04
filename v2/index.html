@@ -944,6 +944,17 @@
     }
     /* 10秒以上応答がない場合にbootLoadingText/loginProgressTextの下へ追加表示する注意文 */
     .loginWarnText { color: var(--accent-text); }
+
+    /* iPhone・iPadなどタッチ端末：Safariは文字サイズが16px未満の入力欄をタップすると画面を自動で拡大し、
+       その拡大はキャンセルしても戻らない。すべての入力欄を16px以上にする。
+       viewportで拡大を禁止はしない（利用者の拡大操作を残すため）。
+       個別の指定（.attendanceRow selectなど）より後ろに置き、同じ詳細度で上書きする */
+    @media (pointer: coarse) {
+      input, select, textarea, .attendanceRow select { font-size: 16px; }
+    }
+    /* チェックボックス・ラジオの色を、アプリのアクセント色（金）に揃える。ブラウザ既定の青を使わない。
+       ライト・ダークのどちらでも --accent を参照するため、チェックの有無は両方で見分けられる */
+    input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -1646,12 +1657,14 @@
   })();
 
   // ==== Googleカレンダー連携（メニューの欄・確認ダイアログ・連携状態の管理） ====
-  // 画面に出す文言はここに集める（Googleの画面の手順③は仮の文言。実際の画面で確認して直す）
+  // 画面に出す文言はここに集める。実際に通したGoogleの画面の流れに合わせている
+  // （機種によって、許可画面のチェック欄の有無が違う：iPhoneは有り、PCは無し）
   const CALENDAR_LINK_GOOGLE_STEPS = [
-    '画面の「詳細」を押す',
-    '「Schedule Board（安全ではないページ）に移動」を押す',
-    'カレンダーの予定を表示・編集する許可にチェックを入れて「続行」を押す',
-    '「連携が完了しました」と出たら、このページを閉じて戻る'
+    '画面の『詳細』を押す',
+    '『Schedule Board（安全ではないページ）に移動』を押す',
+    '『再ログインしようとしています』と出たら、『次へ』を押す',
+    '『すべてのカレンダーの予定の表示と編集』にチェック欄があるときは、必ずチェックを入れてから、画面の下の『次へ』または『続行』を押す',
+    '『連携が完了しました』と出たら（上に青い帯が出ても正常です）、このページを閉じて戻る'
   ];
   const CALENDAR_LINK_FAILED_TEXT = '連携を始められませんでした。管理者に連絡してください。';
   const CALENDAR_NOTICE_SAVE = {
