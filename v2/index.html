@@ -622,16 +622,18 @@
       display: flex; flex-direction: column; gap: 3px; justify-content: center;
       position: sticky; left: 224px; z-index: 2; background: var(--surface);
     }
+    /* 文字サイズは予定バー（.scheduleBlock）と同じ --event-font-size を使う（スマホ・パソコン共通）。
+       数値を直接書かず変数を参照するため、予定バー側の文字サイズを変えるとここも追従する */
     .allDayChip {
       background: var(--accent-light); color: var(--accent-text); border-radius: 4px;
-      padding: 3px 6px; font-size: 11px; cursor: pointer; white-space: normal;
+      padding: 3px 6px; font-size: var(--event-font-size); cursor: pointer; white-space: normal;
     }
-    /* PCブラウザでは終日予定枠が大きすぎたため、元のサイズ（padding: 4px/3px 6px、
-       font-size: 11px）の3分の2に縮小する。スマホ表示（max-width:480px）は別途
-       専用のスタイルを持っているため、min-widthで区切ってそちらには影響しないようにする */
+    /* PCブラウザでは終日予定枠が大きすぎたため、元の余白（padding: 4px/3px 6px）の3分の2に縮小する。
+       スマホ表示（max-width:480px）は別途専用のスタイルを持っているため、min-widthで区切ってそちらには
+       影響しないようにする。文字サイズはここでは変えない（予定バーと揃えるため） */
     @media (min-width: 481px) {
       .empAllDayCell { padding: 2.7px; gap: 2px; }
-      .allDayChip { padding: 2px 4px; font-size: 7.3px; }
+      .allDayChip { padding: 2px 4px; }
     }
     /* flex-shrink:0が無いと、他の列（氏名・出退勤・終日・メモ）は flex:0 0 Npx で
        縮小しないのにこの列だけ縮んでしまい、trackWidthPx()を前提に絶対px配置している
@@ -911,7 +913,7 @@
       /* 「終日」列の幅は固定値ではなく、その日実際に入っている予定量に応じてJS側
          （measureAllDayWidth_・renderTimeHeaderRow/renderEmployeeRowのallDayWidthPx）で
          動的に決める。ここでは中身のチップの見た目だけ定義する（幅は付けない） */
-      .allDayChip { font-size: 10px; padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .allDayChip { padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     }
 
     /* ==== v2追加：起動時読み込み・ログイン画面 ==== */
@@ -3482,7 +3484,8 @@
   function measureAllDayWidth_(schedules, checkedNames) {
     const MAX_W = 160, CHIP_PADDING = 14; // .allDayChipの左右パディング＋ボーダー分の余白
     if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
-    _measureCtx.font = '10px "Zen Maru Gothic", "Noto Sans JP", sans-serif';
+    // 終日チップの実際の文字サイズ（--event-font-size）と同じ値で計測する（予定バーと共通の定数）
+    _measureCtx.font = SCHEDULE_BLOCK_FONT;
     const nameSet = new Set(checkedNames);
     let maxTextW = 0;
     (schedules || []).forEach(function (s) {
@@ -3842,7 +3845,7 @@
 
   // ==== 予定バーの文字表示（収まる／右にはみ出す／折返し＋省略）を決めるための計測 ====
   // .scheduleBlockのCSS（font-size/line-height/padding/border）と合わせる。
-  // CSS側を変更したらここも合わせること
+  // CSS側を変更したらここも合わせること。終日チップの幅計測（measureAllDayWidth_）にも使う
   const SCHEDULE_BLOCK_FONT = '11.5px "Zen Maru Gothic", "Noto Sans JP", "Hiragino Kaku Gothic ProN", sans-serif';
   const SCHEDULE_BLOCK_LINE_HEIGHT = 15;
   const SCHEDULE_BLOCK_PAD_X = 14; // 左右padding(6px*2)＋border(1px*2)
