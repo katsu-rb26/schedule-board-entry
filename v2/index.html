@@ -233,6 +233,99 @@
     }
     .periodTitleBtn:hover { background: var(--accent-light); }
     .slimTodayBtn { flex: 0 0 auto; font-size: 12px; padding: 5px 10px; }
+
+    /* 縮んだヘッダーの帯：[グループ] | [◀] [日付] [▶] を1本の帯にまとめる。
+       帯の色は既存の--accent-light（ダークでは濃い茶色）、枠は--border-strongを使う。
+       縮んでいない時は帯を隠し、期間タイトル（periodTitleBtn）を中央に出す */
+    .slimBand { display: none; }
+    .appHeader.collapsed .slimBar { height: 56px; }
+    .appHeader.collapsed .periodTitleBtn { display: none; }
+    .appHeader.collapsed .slimBand {
+      display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0;
+      height: 56px; padding: 0 6px; border-radius: 14px;
+      background: var(--accent-light); border: 1px solid var(--border-strong);
+    }
+    .slimGroupBtn {
+      flex: 0 1 auto; min-width: 64px; max-width: 45%; height: 44px;
+      display: flex; align-items: center; gap: 3px; padding: 0 8px;
+      border: 1px solid var(--border); border-radius: 22px; background: var(--surface);
+      color: var(--text-primary); font-size: 13px; font-weight: 700;
+    }
+    .slimGroupName { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .slimGroupMark { flex: 0 0 auto; color: var(--accent); }
+    .slimGroupCaret { flex: 0 0 auto; font-size: 11px; color: var(--text-secondary); }
+    .slimBandDivider { flex: 0 0 1px; width: 1px; height: 28px; background: var(--border-strong); margin: 0 2px; }
+    .slimDayBtn {
+      flex: 0 0 36px; width: 36px; height: 44px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 8px; background: transparent;
+      color: var(--accent-text); font-size: 13px;
+    }
+    .slimDayBtn:hover { background: var(--surface); }
+    .slimDateBtn {
+      flex: 0 0 auto; height: 44px; min-width: 44px; padding: 0 8px;
+      display: flex; align-items: center; gap: 6px;
+      border: none; border-radius: 8px; background: transparent;
+      color: var(--text-primary); font-size: 15px; font-weight: 700; white-space: nowrap;
+    }
+    .slimDateBtn:hover { background: var(--surface); }
+    .dateShort { display: none; }
+    .dateBtnIcon { flex: 0 0 auto; width: 16px; height: 16px; color: var(--accent-text); }
+    /* 勤務集計ビューではグループチップ行と同じく、帯のグループ表示も出さない */
+    .appHeader.summaryMode .slimGroupBtn, .appHeader.summaryMode .slimBandDivider { display: none; }
+
+    /* 縮んだ帯の真下に開くパネル（グループ一覧・日付カレンダー）。位置はJS（placeFloatPanel_）で決める */
+    .floatPanel {
+      position: fixed; z-index: 80;
+      background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .floatPanel[hidden] { display: none; }
+    .groupPanel { width: 260px; max-width: calc(100vw - 12px); overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px; }
+    .groupPanelItem {
+      width: 100%; min-height: 48px; display: flex; align-items: center; gap: 8px;
+      padding: 0 10px; border: none; border-radius: 8px; background: transparent;
+      color: var(--text-primary); font-size: 14px; text-align: left;
+    }
+    .groupPanelItem.selected { background: var(--accent-light); color: var(--accent-text); font-weight: 700; }
+    .groupPanelCheck { flex: 0 0 16px; width: 16px; text-align: center; color: var(--accent-text); }
+    .groupPanelName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .groupPanelDefault { flex: 0 0 auto; color: var(--accent); }
+    .groupPanelEmpty { padding: 12px 10px; font-size: 12px; color: var(--text-muted); }
+    .calPanel { padding: 8px; }
+    .calHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .calNavBtn { width: 44px; height: 44px; padding: 0; border: none; background: transparent; color: var(--accent); font-size: 14px; border-radius: 50%; }
+    .calNavBtn:hover { background: var(--accent-light); }
+    .calLabel { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+    .calGrid { display: grid; grid-template-columns: repeat(7, 40px); gap: 2px; justify-content: center; }
+    .calWeekday { height: 26px; line-height: 26px; text-align: center; font-size: 11px; font-weight: 600; color: var(--text-muted); }
+    .calDay {
+      width: 40px; height: 40px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid transparent; border-radius: 50%; background: transparent;
+      color: var(--text-primary); font-size: 14px;
+    }
+    .calDay.outside { opacity: 0.35; }
+    .calDay.sat, .calWeekday.sat { color: var(--sat-color); }
+    .calDay.sun, .calWeekday.sun { color: var(--sun-color); }
+    .calDay.today:not(.selected) { border-color: var(--accent); }
+    .calDay.selected { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+    /* スマホ幅では帯に収まるよう、日付を「10/10(土)」の短い形式にしてカレンダーのアイコンを省く。
+       グループ名に幅を回すため、日付の余白と文字を少し詰める */
+    @media (max-width: 480px) {
+      .dateLong, .dateBtnIcon { display: none; }
+      .dateShort { display: inline; }
+      .slimBand { gap: 2px; }
+      .slimDateBtn { padding: 0 4px; font-size: 14px; gap: 0; }
+      .slimGroupBtn { padding: 0 6px; }
+    }
+    /* 360px以下（320px幅の端末）では、区切り線と▾を省き、グループ名は短くなっても帯の中に収める */
+    @media (max-width: 360px) {
+      .slimBand { padding: 0 4px; }
+      .slimBandDivider, .slimGroupCaret { display: none; }
+      .slimGroupBtn { min-width: 0; }
+      .slimDateBtn { font-size: 13px; }
+    }
     /* キャッシュに無い月/日を初めて開いた時だけ表示する、控えめなローディング表示。
        画面を空白にせず、期間タイトル横に小さな回転インジケータを出すだけにとどめる */
     .slimSpinner {
@@ -886,6 +979,19 @@
     <div class="slimBar">
       <button type="button" class="iconBtn" id="menuBtn" aria-label="メニューを開く">☰</button>
       <button type="button" class="periodTitleBtn" id="periodTitleBtn" aria-label="日付を選択"></button>
+      <!-- 縮んだヘッダーの帯（グループ・前日/翌日・日付）。縮んでいない時は非表示（CSS参照） -->
+      <div class="slimBand" id="slimBand">
+        <button type="button" class="slimGroupBtn" id="slimGroupBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span class="slimGroupName" id="slimGroupName"></span><span class="slimGroupMark" id="slimGroupMark"></span><span class="slimGroupCaret" aria-hidden="true">▾</span>
+        </button>
+        <span class="slimBandDivider" aria-hidden="true"></span>
+        <button type="button" class="slimDayBtn" id="slimPrevDayBtn" aria-label="前の日">◀</button>
+        <button type="button" class="slimDateBtn" id="slimDateBtn" aria-haspopup="dialog" aria-expanded="false">
+          <span class="dateLong" id="slimDateLong"></span><span class="dateShort" id="slimDateShort"></span>
+          <svg class="dateBtnIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="slimDayBtn" id="slimNextDayBtn" aria-label="次の日">▶</button>
+      </div>
       <span class="slimSpinner" id="slimSpinner" hidden aria-hidden="true"></span>
       <button id="todayBtn" class="navCurrentBtn slimTodayBtn">今日</button>
     </div>
@@ -897,6 +1003,20 @@
       <div class="weekStripDays" id="weekStripDays"></div>
       <button type="button" class="weekArrowBtn" id="weekNextBtn" aria-label="翌週へ">▶</button>
     </div>
+  </div>
+
+  <!-- 縮んだヘッダーの帯から開くパネル（position:fixed。位置はJSでボタンの真下に合わせる）。
+       一度に1つだけ開く（openFloatPanel_参照） -->
+  <div class="floatPanel groupPanel" id="slimGroupPanel" role="listbox" aria-label="表示グループ" hidden>
+    <div id="slimGroupList"></div>
+  </div>
+  <div class="floatPanel calPanel" id="dateCalPanel" role="dialog" aria-label="日付を選択" hidden>
+    <div class="calHeader">
+      <button type="button" class="calNavBtn" id="dateCalPrevBtn" aria-label="前の月">◀</button>
+      <span class="calLabel" id="dateCalLabel"></span>
+      <button type="button" class="calNavBtn" id="dateCalNextBtn" aria-label="次の月">▶</button>
+    </div>
+    <div class="calGrid" id="dateCalGrid"></div>
   </div>
 
   <div class="drawerScrim" id="drawerScrim"></div>
@@ -1983,6 +2103,7 @@
   // ヘッダーのグループ切替チップ行。groupSelect（ドロワー内）と同じデータを表示し、
   // タップで即applyGroup()する。末尾の「＋ 選択」はメンバー個別選択（ドロワー）を開く
   function renderGroupChips_() {
+    renderSlimGroupLabel_();
     const wrap = document.getElementById('groupChipsRow');
     if (!wrap) return;
     wrap.innerHTML = '';
@@ -2212,13 +2333,31 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer_();
     });
-    document.getElementById('periodTitleBtn').addEventListener('click', function () {
-      const input = document.getElementById('dateInput');
-      if (typeof input.showPicker === 'function') {
-        try { input.showPicker(); return; } catch (e) { /* フォールバックへ */ }
-      }
-      input.focus();
-      input.click();
+    // 日付ボタン（期間タイトル・縮んだ帯のどちらも）は、ドロワーの日付欄（dateInput）を使わず、
+    // 真下に開く小さなカレンダーで選ぶ（dateInputは画面外に隠れているため、ネイティブのピッカーが
+    // 左端に出てしまっていた）。もう一度押すと閉じる
+    function toggleDateCalendar_() {
+      if (floatPanelOpen_ && floatPanelOpen_.panel.id === 'dateCalPanel') closeFloatPanel_();
+      else openDateCalendar_();
+    }
+    document.getElementById('periodTitleBtn').addEventListener('click', toggleDateCalendar_);
+    document.getElementById('slimDateBtn').addEventListener('click', toggleDateCalendar_);
+    document.getElementById('slimGroupBtn').addEventListener('click', function () {
+      if (floatPanelOpen_ && floatPanelOpen_.panel.id === 'slimGroupPanel') closeFloatPanel_();
+      else openGroupPanel_();
+    });
+    document.getElementById('slimPrevDayBtn').addEventListener('click', function () { shiftDate(-1); });
+    document.getElementById('slimNextDayBtn').addEventListener('click', function () { shiftDate(1); });
+    document.getElementById('dateCalPrevBtn').addEventListener('click', function () { shiftCalMonth_(-1); });
+    document.getElementById('dateCalNextBtn').addEventListener('click', function () { shiftCalMonth_(1); });
+    // パネルの外を押したら閉じる。ボタン自身（anchor）への押下は、そのボタンのクリック処理が開閉するため除外する
+    document.addEventListener('click', function (e) {
+      if (!floatPanelOpen_) return;
+      if (floatPanelOpen_.panel.contains(e.target) || floatPanelOpen_.anchor.contains(e.target)) return;
+      closeFloatPanel_();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && floatPanelOpen_) closeFloatPanel_();
     });
     bindWeekStripSwipe_();
     document.getElementById('weekPrevBtn').addEventListener('click', function () { shiftWeek_(-7); });
@@ -2438,16 +2577,32 @@
     renderGroupChips_();
   }
 
+  // 期間タイトル（縮む前のスリムバー中央）と、縮んだ帯の日付ボタンに同じ内容を出す。
+  // 帯の日付は、PC幅の長い形式（long）とスマホ幅の短い形式（short）を両方持ち、CSSで出し分ける
   function updatePeriodTitle_() {
     const btn = document.getElementById('periodTitleBtn');
     if (!btn) return;
+    let longLabel, shortLabel;
     if (state.viewMode === 'day') {
       const d = parseYmd(state.date);
       const weekday = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
-      btn.textContent = (d.getMonth() + 1) + '月' + d.getDate() + '日(' + weekday + ')';
+      longLabel = (d.getMonth() + 1) + '月' + d.getDate() + '日(' + weekday + ')';
+      shortLabel = (d.getMonth() + 1) + '/' + d.getDate() + '(' + weekday + ')';
     } else {
-      btn.textContent = formatMonthLabel_(state.month);
+      longLabel = formatMonthLabel_(state.month);
+      shortLabel = state.month.replace('-', '/');
     }
+    btn.textContent = longLabel;
+    document.getElementById('slimDateLong').textContent = longLabel;
+    document.getElementById('slimDateShort').textContent = shortLabel;
+  }
+
+  // 縮んだ帯のグループ名（表示中のグループ・★は既定のグループのみ）。表示中のグループは
+  // groupSelectの値で判断する（applyGroupがgroupSelectを更新するため、チップ・一覧と常に一致する）
+  function renderSlimGroupLabel_() {
+    const name = document.getElementById('groupSelect').value;
+    document.getElementById('slimGroupName').textContent = name || 'グループ未選択';
+    document.getElementById('slimGroupMark').textContent = (name && name === MY_GROUP_SETTINGS.defaultGroup) ? '★' : '';
   }
 
   // 週ストリップ：state.dateを含む月〜日の週を7つの丸で表示する。タップした日は
@@ -2508,6 +2663,7 @@
 
   // ==== ☰ドロワー ====
   function openDrawer_() {
+    closeFloatPanel_();
     refreshCalendarLinkStatus_(false); // 取得できていなかった場合も、開いたときにもう一度確認する（間引きあり）
     document.getElementById('drawerScrim').classList.add('open');
     document.getElementById('drawer').classList.add('open');
@@ -2526,6 +2682,131 @@
     const list = document.getElementById('employeeList');
     if (list.hidden) document.getElementById('toggleEmployeeListBtn').click();
     document.getElementById('toggleEmployeeListBtn').scrollIntoView({ block: 'center' });
+  }
+
+  // ==== 縮んだヘッダーの帯から開くパネル（グループ一覧・日付カレンダー） ====
+  // 一度に1つだけ開く。外を押す・Escで閉じる。画面の端で見切れないよう左右の位置を補正し、
+  // 高さが足りない時は一覧の中をスクロールさせる。以前あった「日付の帯から出る左端のリスト」は
+  // 廃止した（dateInputはドロワー内にあり、画面外に隠れているため、ネイティブのピッカーが
+  // 左端に出ていた）。日付の選択は、この小さなカレンダー（dateCalPanel）から行う
+  let floatPanelOpen_ = null; // { panel, anchor } または null
+
+  function openFloatPanel_(panel, anchor) {
+    closeFloatPanel_();
+    panel.hidden = false;
+    anchor.setAttribute('aria-expanded', 'true');
+    placeFloatPanel_(panel, anchor);
+    floatPanelOpen_ = { panel: panel, anchor: anchor };
+  }
+
+  function closeFloatPanel_() {
+    if (!floatPanelOpen_) return;
+    floatPanelOpen_.panel.hidden = true;
+    floatPanelOpen_.anchor.setAttribute('aria-expanded', 'false');
+    floatPanelOpen_ = null;
+  }
+
+  function placeFloatPanel_(panel, anchor) {
+    const r = anchor.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const top = r.bottom + 6;
+    panel.style.top = top + 'px';
+    panel.style.maxHeight = Math.max(160, window.innerHeight - top - 12) + 'px';
+    const left = Math.max(6, Math.min(r.left, vw - panel.offsetWidth - 6));
+    panel.style.left = left + 'px';
+  }
+
+  // 縮んだ時は帯の日付ボタン、縮んでいない時は期間タイトルを基準にする（表示中の方の真下に開く）
+  function dateAnchorBtn_() {
+    return document.getElementById('appHeader').classList.contains('collapsed')
+      ? document.getElementById('slimDateBtn')
+      : document.getElementById('periodTitleBtn');
+  }
+
+  function openGroupPanel_() {
+    const list = document.getElementById('slimGroupList');
+    const selected = document.getElementById('groupSelect').value;
+    const groups = getAllGroups();
+    list.innerHTML = '';
+    if (groups.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'groupPanelEmpty';
+      empty.textContent = 'グループはまだありません';
+      list.appendChild(empty);
+    }
+    groups.forEach(function (g) {
+      const isSelected = g.name === selected;
+      const isDefault = g.name === MY_GROUP_SETTINGS.defaultGroup;
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'groupPanelItem' + (isSelected ? ' selected' : '');
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(isSelected));
+      row.innerHTML =
+        '<span class="groupPanelCheck" aria-hidden="true">' + (isSelected ? '✓' : '') + '</span>' +
+        '<span class="groupPanelName">' + escapeHtml(g.name) + '</span>' +
+        (isDefault ? '<span class="groupPanelDefault" title="ログイン時に自動で選ばれるグループ">★</span>' : '');
+      // 行の切替は、チップ行（renderGroupChips_）と同じ動作：applyGroupのあと描画を更新する
+      row.addEventListener('click', function () {
+        applyGroup(g.name);
+        renderCurrentView();
+        closeFloatPanel_();
+      });
+      list.appendChild(row);
+    });
+    openFloatPanel_(document.getElementById('slimGroupPanel'), document.getElementById('slimGroupBtn'));
+  }
+
+  // 表示中の月（カレンダーの見出し）。日付を選ぶまでは、state.date・state.monthは変えない
+  let calViewMonth_ = '';
+
+  function openDateCalendar_() {
+    calViewMonth_ = state.date.slice(0, 7);
+    renderDateCalendar_();
+    openFloatPanel_(document.getElementById('dateCalPanel'), dateAnchorBtn_());
+  }
+
+  function shiftCalMonth_(deltaMonths) {
+    const p = calViewMonth_.split('-').map(Number);
+    const d = new Date(p[0], p[1] - 1 + deltaMonths, 1);
+    calViewMonth_ = d.getFullYear() + '-' + pad2(d.getMonth() + 1);
+    renderDateCalendar_();
+  }
+
+  // 月曜始まりの6週（42マス）を毎回描く。週数が変わってもパネルの高さが動かないようにするため
+  function renderDateCalendar_() {
+    const p = calViewMonth_.split('-').map(Number);
+    const year = p[0], month = p[1];
+    document.getElementById('dateCalLabel').textContent = year + '年' + month + '月';
+    const grid = document.getElementById('dateCalGrid');
+    grid.innerHTML = '';
+    ['月', '火', '水', '木', '金', '土', '日'].forEach(function (w, i) {
+      const h = document.createElement('div');
+      h.className = 'calWeekday' + (i === 5 ? ' sat' : (i === 6 ? ' sun' : ''));
+      h.textContent = w;
+      grid.appendChild(h);
+    });
+    const firstDow = new Date(year, month - 1, 1).getDay();
+    const offset = (firstDow + 6) % 7; // 月曜を0にした、1日の位置
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(year, month - 1, 1 - offset + i);
+      const ymd = formatYmd(d);
+      const dow = d.getDay();
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'calDay'
+        + (dow === 6 ? ' sat' : (dow === 0 ? ' sun' : ''))
+        + (d.getMonth() !== month - 1 ? ' outside' : '')
+        + (ymd === TODAY_STR ? ' today' : '')
+        + (ymd === state.date ? ' selected' : '');
+      cell.textContent = d.getDate();
+      cell.setAttribute('aria-label', (d.getMonth() + 1) + '月' + d.getDate() + '日');
+      cell.addEventListener('click', function () {
+        closeFloatPanel_();
+        changeSelectedDate_(ymd); // 「日付へ移動」（ドロワーの日付欄）と同じ処理
+      });
+      grid.appendChild(cell);
+    }
   }
 
   // ==== 予定表示エリアのスクロールに応じてヘッダーを折りたたむ ====
@@ -2548,6 +2829,7 @@
 
   function toggleHeaderCollapsed_(header, collapsed, scrollTop) {
     header.classList.toggle('collapsed', collapsed);
+    closeFloatPanel_(); // 帯の位置が変わるため、開いていたパネルは閉じる
     headerScrollAnchor_ = scrollTop;
     headerCollapseLocked_ = true;
     if (headerLockTimer_) clearTimeout(headerLockTimer_);
