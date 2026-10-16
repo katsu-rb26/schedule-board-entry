@@ -121,6 +121,16 @@
         --dayoff-bg: #242a44;
         --dayoff-row-bg: #242a44;
         --now-line: #ff7a5c;
+        /* はみ出した名前の延長文字（.blockTextExt）の色：暗い背景で沈む濃い予定色だけ明るい同系色にする
+           （背景--surfaceに対しコントラスト比4.5以上）。ここに無い色は、JS側のvar()の第2引数＝元の予定色に戻る */
+        --ext-tomato: #FF6C6C;
+        --ext-tangerine: #F6754C;
+        --ext-basil: #0FB45E;
+        --ext-peacock: #03A4F2;
+        --ext-blueberry: #8D98D7;
+        --ext-lavender: #8D98D3;
+        --ext-grape: #CE7CE3;
+        --ext-graphite: #9C9C9C;
         --logo-bg: #fff;
         --logo-padding: 3px 9px;
         --logo-radius: 8px;
@@ -146,6 +156,16 @@
       --dayoff-bg: #242a44;
       --dayoff-row-bg: #242a44;
       --now-line: #ff7a5c;
+      /* はみ出した名前の延長文字（.blockTextExt）の色：暗い背景で沈む濃い予定色だけ明るい同系色にする
+         （背景--surfaceに対しコントラスト比4.5以上）。ここに無い色は、JS側のvar()の第2引数＝元の予定色に戻る */
+      --ext-tomato: #FF6C6C;
+      --ext-tangerine: #F6754C;
+      --ext-basil: #0FB45E;
+      --ext-peacock: #03A4F2;
+      --ext-blueberry: #8D98D7;
+      --ext-lavender: #8D98D3;
+      --ext-grape: #CE7CE3;
+      --ext-graphite: #9C9C9C;
       --logo-bg: #fff;
       --logo-padding: 3px 9px;
       --logo-radius: 8px;
@@ -4034,7 +4054,8 @@
       ext.className = 'blockTextExt';
       ext.setAttribute('aria-hidden', 'true');
       ext.textContent = text;
-      ext.style.color = customColor || 'var(--text-primary)';
+      // ダーク時は--ext-<色キー>（上のダークパレット）があればそれ、無ければ（ライト時や未定義の色）元の予定色
+      ext.style.color = customColor ? 'var(--ext-' + s.color + ', ' + customColor + ')' : 'var(--text-primary)';
       ext.style.clipPath = 'inset(0 0 0 ' + Math.max(0, timeWidthPx - 8) + 'px)';
       block.appendChild(ext);
     } else {
