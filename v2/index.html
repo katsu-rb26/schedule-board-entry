@@ -452,6 +452,53 @@
       gap: 8px; margin-bottom: 16px; padding-right: 30px;
     }
     .drawerSection { margin-bottom: 18px; }
+
+    /* ==== 並び順を編集（メンバー／将来グループにも使い回す一覧部品） ==== */
+    .toggleListBtn.entryBtn { min-height: 36px; margin-top: 6px; }
+    .reorderBox { width: 400px; display: flex; flex-direction: column; }
+    .reorderHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .reorderHeader h3 { margin: 0; padding-right: 0; }
+    .reorderTabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+    .reorderTab {
+      border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
+      color: var(--text-secondary); padding: 8px 14px; font-size: 13px;
+    }
+    .reorderTab.active { color: var(--accent-text); border-bottom-color: var(--accent); font-weight: 700; }
+    .reorderTab:disabled { color: var(--text-muted); opacity: 0.55; cursor: not-allowed; }
+    .reorderScroll {
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+      max-height: calc(100vh - 250px); max-height: calc(100dvh - 250px); min-height: 80px;
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    .reorderList { position: relative; }
+    .reorderRow {
+      display: flex; align-items: center; gap: 8px; box-sizing: border-box; height: 48px; padding: 0 6px 0 4px;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      transition: transform 0.12s ease;
+    }
+    .reorderRow:last-child { border-bottom: none; }
+    .reorderRow.dragging {
+      transition: none; position: relative; z-index: 2; background: var(--accent-light);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    }
+    .reorderHandle {
+      flex: 0 0 auto; width: 40px; height: 40px; padding: 0; border: none; background: transparent;
+      color: var(--text-muted); font-size: 20px; line-height: 1; cursor: grab;
+      touch-action: none; user-select: none; -webkit-user-select: none; border-radius: 6px;
+    }
+    .reorderHandle:hover { background: var(--accent-light); color: var(--accent-text); }
+    .reorderRow.dragging .reorderHandle { cursor: grabbing; }
+    .reorderName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text-primary); }
+    .reorderMoveBtn { flex: 0 0 auto; width: 40px; height: 40px; padding: 0; font-size: 14px; border-radius: 6px; }
+    .reorderMoveBtn:disabled { opacity: 0.3; cursor: default; }
+    body.reorderDragging { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+    .reorderFooter { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; min-height: 24px; }
+    .reorderResetLink {
+      border: none; background: transparent; padding: 4px 0; font-size: 12.5px;
+      color: var(--accent-text); text-decoration: underline; cursor: pointer;
+    }
+    .reorderSaved { font-size: 12px; color: var(--text-muted); }
+    .reorderSaved[hidden] { display: none; }
     .drawerDivider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     .drawerFootnote { font-size: 10.5px; color: var(--text-muted); margin: 4px 0 0; }
 
@@ -1105,6 +1152,7 @@
         <button type="button" class="toggleListBtn" id="toggleEmployeeListBtn">メンバーを選択 ▾</button>
         <button type="button" class="toggleListBtn" id="saveGroupBtn">＋ グループとして保存</button>
       </div>
+      <button type="button" class="toggleListBtn entryBtn" id="openReorderBtn">↕ 並び順を編集</button>
       <div class="employeeList" id="employeeList" hidden></div>
     </div>
 
@@ -1333,6 +1381,25 @@
     </div>
   </div>
 
+  <!-- 並び順を編集（本人専用。今回はメンバーのみ。グループタブは後日有効にする） -->
+  <div class="modalOverlay" id="reorderOverlay" hidden>
+    <div class="modalBox reorderBox" role="dialog" aria-modal="true" aria-labelledby="reorderTitle">
+      <div class="reorderHeader">
+        <h3 id="reorderTitle">並び順を編集</h3>
+        <button type="button" class="primary" id="reorderDoneBtn">完了</button>
+      </div>
+      <div class="reorderTabs" role="tablist">
+        <button type="button" class="reorderTab active" role="tab" aria-selected="true" id="reorderTabMembers">メンバー</button>
+        <button type="button" class="reorderTab" role="tab" aria-selected="false" id="reorderTabGroups" disabled title="準備中">グループ</button>
+      </div>
+      <div class="reorderScroll" id="reorderScroll"></div>
+      <div class="reorderFooter">
+        <button type="button" class="reorderResetLink" id="reorderResetBtn">初期の並びに戻す</button>
+        <span class="reorderSaved" id="reorderSavedMsg" role="status" aria-live="polite" hidden>保存しました</span>
+      </div>
+    </div>
+  </div>
+
   <!-- オリジナル表示グループの保存（本人専用・最大10件） -->
   <div class="modalOverlay" id="groupSaveOverlay" hidden>
     <div class="modalBox" style="width:360px;">
@@ -1374,6 +1441,10 @@
   let SCHEDULE_COLORS = [];
   let MY_TASKS_INITIAL = { employeeName: null, tasks: [] };
   let MY_GROUP_SETTINGS = { groups: [], defaultGroup: '' };
+  // 個人ごとの並び順（メンバー順・グループ順）。MY_ORDERは画面に反映中の順、MY_ORDER_CONFIRMED_は
+  // サーバーが保存を確認した順（保存失敗時に画面をここへ戻す）
+  let MY_ORDER = { members: [], groups: [] };
+  let MY_ORDER_CONFIRMED_ = [];
   let TODAY_STR = '';
   let CURRENT_EMAIL = '';
   let IS_MASTER_ADMIN = false;
@@ -1433,7 +1504,8 @@
     'restoreSchedule', 'saveAttendance', 'updateEmployeeNote', 'getMyTasks', 'saveMyTasks',
     'getMyGroupSettings', 'saveMyCustomGroups', 'setMyDefaultGroup', 'getThemeModePref',
     'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
-    'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar'
+    'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
+    'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder'
   ];
 
   // action="call"でfnを1回呼ぶ。BUSYは1秒待って1回だけ再試行する。
@@ -1567,6 +1639,13 @@
       '-' + (d.getDate() < 10 ? '0' : '') + d.getDate();
   }
 
+  function sbParseMyOrder_(json) {
+    let v = null;
+    try { v = json ? JSON.parse(json) : null; } catch (e) { v = null; }
+    const pick = function (a) { return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string'; }) : []; };
+    return { members: pick(v && v.members), groups: pick(v && v.groups) };
+  }
+
   // 旧テンプレート変数と同じ名前・同じ形の値を、getInitData()の応答から設定する
   function sbApplyInitData_(data) {
     EMPLOYEES = JSON.parse(data.employeesJson);
@@ -1575,6 +1654,9 @@
     SCHEDULE_COLORS = JSON.parse(data.scheduleColorsJson);
     MY_TASKS_INITIAL = JSON.parse(data.myTasksJson);
     MY_GROUP_SETTINGS = JSON.parse(data.myGroupSettingsJson);
+    // 古いサーバーにはmyOrderJsonが無い。無い・壊れている場合は空（社員マスタ順）として扱う
+    MY_ORDER = sbParseMyOrder_(data.myOrderJson);
+    MY_ORDER_CONFIRMED_ = MY_ORDER.members.slice();
     // サーバーの今日の日付を使う。形が不正・欠落していたらブラウザの今日の日付を使う
     TODAY_STR = /^\d{4}-\d{2}-\d{2}$/.test(data.todayStr || '') ? data.todayStr : sbBrowserTodayStr_();
     CURRENT_EMAIL = data.userEmail;
@@ -2218,7 +2300,7 @@
   function populateEmployeeList() {
     const wrap = document.getElementById('employeeList');
     wrap.innerHTML = '';
-    EMPLOYEES.forEach(function (emp) {
+    orderedEmployees_().forEach(function (emp) {
       const label = document.createElement('label');
       label.className = 'employeeChip';
       label.innerHTML =
@@ -2420,7 +2502,11 @@
     document.getElementById('drawerScrim').addEventListener('click', closeDrawer_);
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer_();
+      if (e.key === 'Escape' && !document.getElementById('reorderOverlay').hidden) closeReorderModal_();
     });
+    document.getElementById('openReorderBtn').addEventListener('click', openReorderModal_);
+    document.getElementById('reorderDoneBtn').addEventListener('click', closeReorderModal_);
+    document.getElementById('reorderResetBtn').addEventListener('click', resetMemberOrder_);
     // 日付ボタン（期間タイトル・縮んだ帯のどちらも）は、ドロワーの日付欄（dateInput）を使わず、
     // 真下に開く小さなカレンダーで選ぶ（dateInputは画面外に隠れているため、ネイティブのピッカーが
     // 左端に出てしまっていた）。もう一度押すと閉じる
@@ -2749,6 +2835,272 @@
     }, { passive: true });
   }
 
+  // ==== 並び順（個人ごと） ====
+  // 表示対象メンバーを取り出す唯一の入口。保存済みの順に載っているメンバーはその順、載っていない
+  // メンバー（新しく追加された人）は保存済みの順の末尾に社員マスタ順で並べる。保存済みの順にあって
+  // 社員マスタにいない名前は無視する。保存済みの順が空なら社員マスタ順のまま
+  function orderedEmployees_() {
+    const saved = (MY_ORDER && MY_ORDER.members) || [];
+    if (!saved.length) return EMPLOYEES.slice();
+    const byName = new Map();
+    EMPLOYEES.forEach(function (e) { byName.set(e.name, e); });
+    const used = new Set();
+    const out = [];
+    saved.forEach(function (n) {
+      const e = byName.get(n);
+      if (e && !used.has(n)) { used.add(n); out.push(e); }
+    });
+    EMPLOYEES.forEach(function (e) { if (!used.has(e.name)) out.push(e); });
+    return out;
+  }
+
+  // チェックされている（＝表示対象の）メンバーの氏名を、並び順どおりに返す
+  function orderedCheckedNames_() {
+    return orderedEmployees_().map(function (e) { return e.name; })
+      .filter(function (name) { return state.checkedEmployees.has(name); });
+  }
+
+  // 並べ替え一覧の部品（メンバー用・将来のグループ用で共用）。
+  // host: 縦スクロールする入れ物。opts.onChange(newItems, prevItems): 順が確定するたびに1回だけ呼ぶ。
+  // ドラッグ中は一覧を描き直さず、掴んだ行と他の行をtranslateYで動かすだけにする（描き直すと掴んだ行が
+  // 入れ替わって指が外れるため）。順の確定・再描画は指を離した時点（pointerup）の1回だけ
+  function createReorderList_(host, opts) {
+    const list = document.createElement('div');
+    list.className = 'reorderList';
+    list.setAttribute('role', 'list');
+    host.appendChild(list);
+    let items = [];
+    let drag = null;
+
+    function move(from, to) {
+      if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
+      const prev = items.slice();
+      const picked = items.splice(from, 1)[0];
+      items.splice(to, 0, picked);
+      render();
+      opts.onChange(items.slice(), prev);
+    }
+
+    function focusMoveBtn_(index, dir) {
+      const row = list.children[index];
+      if (!row) return;
+      const primary = row.querySelector(dir < 0 ? '.reorderUp' : '.reorderDown');
+      const other = row.querySelector(dir < 0 ? '.reorderDown' : '.reorderUp');
+      (primary && !primary.disabled ? primary : other).focus();
+    }
+
+    function render() {
+      list.innerHTML = '';
+      items.forEach(function (name, i) {
+        const row = document.createElement('div');
+        row.className = 'reorderRow';
+        row.setAttribute('role', 'listitem');
+
+        const handle = document.createElement('button');
+        handle.type = 'button';
+        handle.className = 'reorderHandle';
+        handle.textContent = '⠿';
+        handle.setAttribute('aria-label', name + ' をドラッグして移動');
+        handle.addEventListener('pointerdown', function (e) { startDrag(e, row, handle); });
+        handle.addEventListener('pointermove', onPointerMove);
+        handle.addEventListener('pointerup', function (e) { if (drag && e.pointerId === drag.pointerId) endDrag(true); });
+        handle.addEventListener('pointercancel', function () { endDrag(false); });
+        handle.addEventListener('lostpointercapture', function () { endDrag(false); });
+
+        const label = document.createElement('span');
+        label.className = 'reorderName';
+        label.textContent = name;
+
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'reorderMoveBtn reorderUp';
+        up.textContent = '▲';
+        up.setAttribute('aria-label', name + ' を上へ');
+        up.disabled = i === 0;
+        up.addEventListener('click', function () { move(i, i - 1); focusMoveBtn_(i - 1, -1); });
+
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'reorderMoveBtn reorderDown';
+        down.textContent = '▼';
+        down.setAttribute('aria-label', name + ' を下へ');
+        down.disabled = i === items.length - 1;
+        down.addEventListener('click', function () { move(i, i + 1); focusMoveBtn_(i + 1, 1); });
+
+        row.appendChild(handle);
+        row.appendChild(label);
+        row.appendChild(up);
+        row.appendChild(down);
+        list.appendChild(row);
+      });
+    }
+
+    function startDrag(e, row, handle) {
+      if (drag) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      const rows = Array.prototype.slice.call(list.children);
+      const from = rows.indexOf(row);
+      if (from < 0) return;
+      drag = {
+        from: from, to: from, handle: handle, pointerId: e.pointerId, row: row, rows: rows,
+        startY: e.clientY, lastY: e.clientY, startScroll: host.scrollTop,
+        metrics: rows.map(function (r) { return { top: r.offsetTop, h: r.offsetHeight }; }),
+        raf: 0
+      };
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* no-op */ }
+      row.classList.add('dragging');
+      document.body.classList.add('reorderDragging');
+      drag.raf = requestAnimationFrame(autoScrollTick);
+    }
+
+    function onPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.lastY = e.clientY;
+      updateDrag();
+    }
+
+    // 掴んだ行を指に付いてこさせ（先頭〜末尾の範囲に収める）、他の行は場所を空けるだけ動かす
+    function updateDrag() {
+      const d = drag;
+      const m = d.metrics[d.from];
+      const last = d.metrics[d.metrics.length - 1];
+      let dy = d.lastY - d.startY + (host.scrollTop - d.startScroll);
+      dy = Math.max(d.metrics[0].top - m.top, Math.min(last.top - m.top, dy));
+      d.row.style.transform = 'translateY(' + dy + 'px)';
+      const center = m.top + dy + m.h / 2;
+      let to = d.metrics.length - 1;
+      for (let i = 0; i < d.metrics.length; i++) {
+        if (center < d.metrics[i].top + d.metrics[i].h) { to = i; break; }
+      }
+      d.to = to;
+      d.rows.forEach(function (r, j) {
+        if (j === d.from) return;
+        let shift = 0;
+        if (d.from < to && j > d.from && j <= to) shift = -m.h;
+        else if (d.from > to && j >= to && j < d.from) shift = m.h;
+        r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      });
+    }
+
+    // 一覧の端（画面の端を超えない範囲）に指が近づいている間、自動でスクロールする
+    function autoScrollTick() {
+      if (!drag) return;
+      const rect = host.getBoundingClientRect();
+      const top = Math.max(rect.top, 0);
+      const bottom = Math.min(rect.bottom, window.innerHeight);
+      const zone = 48;
+      let speed = 0;
+      if (drag.lastY < top + zone) speed = -Math.min(1, (top + zone - drag.lastY) / zone) * 16;
+      else if (drag.lastY > bottom - zone) speed = Math.min(1, (drag.lastY - (bottom - zone)) / zone) * 16;
+      if (speed) {
+        const before = host.scrollTop;
+        host.scrollTop = before + speed;
+        if (host.scrollTop !== before) updateDrag();
+      }
+      drag.raf = requestAnimationFrame(autoScrollTick);
+    }
+
+    // 何度呼ばれても安全（pointerup／pointercancel／lostpointercaptureのどれが先に来てもよい）。
+    // commitがtrueで場所が変わったときだけmoveする（ここで初めて順を確定し、再描画と保存が走る）
+    function endDrag(commit) {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      cancelAnimationFrame(d.raf);
+      try { if (d.handle.hasPointerCapture(d.pointerId)) d.handle.releasePointerCapture(d.pointerId); } catch (err) { /* no-op */ }
+      d.rows.forEach(function (r) { r.style.transform = ''; });
+      d.row.classList.remove('dragging');
+      document.body.classList.remove('reorderDragging');
+      if (commit && d.to !== d.from) move(d.from, d.to);
+    }
+
+    return {
+      setItems: function (arr) { items = arr.slice(); render(); },
+      getItems: function () { return items.slice(); },
+      move: move
+    };
+  }
+
+  // メンバー順の保存：動かすたびに自動保存する。保存は直列（同時に1つだけ送り、送信中に
+  // 来た変更は最新の1つにまとめて、前の保存が終わってから送る）なので、最後の順が必ず残る。
+  // 失敗したら、サーバーが最後に確認した順へ画面を戻してshowRunErrorで知らせる
+  let memberOrderInFlight_ = false;
+  let memberOrderPending_ = null;
+  let memberReorderList_ = null;
+  let reorderSavedTimer_ = null;
+
+  function applyOrderToViews_() {
+    populateEmployeeList();
+    document.querySelectorAll('#employeeList .employeeChip').forEach(function (label) {
+      const checkbox = label.querySelector('input');
+      const checked = state.checkedEmployees.has(checkbox.dataset.name);
+      checkbox.checked = checked;
+      label.classList.toggle('checked', checked);
+    });
+    populateEmployeeSelect();
+    renderCurrentView();
+  }
+
+  function showReorderSaved_() {
+    const el = document.getElementById('reorderSavedMsg');
+    el.hidden = false;
+    clearTimeout(reorderSavedTimer_);
+    reorderSavedTimer_ = setTimeout(function () { el.hidden = true; }, 1800);
+  }
+
+  function setMemberOrder_(names) {
+    MY_ORDER.members = names.slice();
+    applyOrderToViews_();
+    memberOrderPending_ = names.slice();
+    if (!memberOrderInFlight_) flushMemberOrder_();
+  }
+
+  function flushMemberOrder_() {
+    const sending = memberOrderPending_;
+    memberOrderPending_ = null;
+    if (!sending) { memberOrderInFlight_ = false; return; }
+    memberOrderInFlight_ = true;
+    document.getElementById('reorderSavedMsg').hidden = true;
+    google.script.run
+      .withSuccessHandler(function (result) {
+        MY_ORDER_CONFIRMED_ = (result && Array.isArray(result.members)) ? result.members.slice() : sending.slice();
+        if (memberOrderPending_) { flushMemberOrder_(); return; }
+        memberOrderInFlight_ = false;
+        showReorderSaved_();
+      })
+      .withFailureHandler(function (err) {
+        memberOrderInFlight_ = false;
+        memberOrderPending_ = null;
+        MY_ORDER.members = MY_ORDER_CONFIRMED_.slice();
+        if (memberReorderList_) memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+        applyOrderToViews_();
+        showRunError(err);
+      })
+      .saveMyMemberOrder(sending);
+  }
+
+  function openReorderModal_() {
+    closeDrawer_();
+    const host = document.getElementById('reorderScroll');
+    if (!memberReorderList_) {
+      memberReorderList_ = createReorderList_(host, { onChange: setMemberOrder_ });
+    }
+    memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+    document.getElementById('reorderSavedMsg').hidden = true;
+    document.getElementById('reorderOverlay').hidden = false;
+    document.getElementById('reorderDoneBtn').focus();
+  }
+
+  function closeReorderModal_() {
+    document.getElementById('reorderOverlay').hidden = true;
+  }
+
+  function resetMemberOrder_() {
+    setMemberOrder_([]);
+    memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+  }
+
   // ==== ☰ドロワー ====
   function openDrawer_() {
     closeFloatPanel_();
@@ -3049,8 +3401,7 @@
     if (monthObserver) { monthObserver.disconnect(); monthObserver = null; }
     monthRenderedUpTo = 0;
 
-    const checkedNames = EMPLOYEES.map(function (e) { return e.name; })
-      .filter(function (name) { return state.checkedEmployees.has(name); });
+    const checkedNames = orderedCheckedNames_();
 
     if (checkedNames.length === 0) {
       const empty = document.createElement('div');
@@ -3253,8 +3604,7 @@
 
         const targetDay = Number(dateStr.split('-')[2]);
         const daysInMonth = getDaysInMonth_(state.month);
-        const checkedNames = EMPLOYEES.map(function (e) { return e.name; })
-          .filter(function (name) { return state.checkedEmployees.has(name); });
+        const checkedNames = orderedCheckedNames_();
         while (monthRenderedUpTo < targetDay && monthRenderedUpTo < daysInMonth) {
           appendMoreMonthDays_(checkedNames);
         }
@@ -3348,8 +3698,7 @@
     if (!block) return;
     const dayGrid = block.querySelector('.ganttGrid');
     const headerWrap = block.querySelector('.monthTimeHeaderWrap');
-    const checkedNames = EMPLOYEES.map(function (e) { return e.name; })
-      .filter(function (name) { return state.checkedEmployees.has(name); });
+    const checkedNames = orderedCheckedNames_();
     const daySchedules = state.monthSchedules.filter(function (s) { return s.date === dateStr; });
     const dayAttendance = state.monthAttendance.filter(function (a) { return a.date === dateStr; });
     renderGanttInto_(dayGrid, dateStr, daySchedules, dayAttendance, checkedNames, headerWrap);
@@ -3387,8 +3736,7 @@
     const container = document.getElementById('summaryGrid');
     container.innerHTML = '';
 
-    const checkedNames = EMPLOYEES.map(function (e) { return e.name; })
-      .filter(function (name) { return state.checkedEmployees.has(name); });
+    const checkedNames = orderedCheckedNames_();
 
     if (checkedNames.length === 0) {
       const empty = document.createElement('div');
@@ -3486,8 +3834,7 @@
   // そのまま渡すだけの薄いラッパーになっている
   function renderGantt() {
     syncHeaderState_();
-    const checkedNames = EMPLOYEES.map(function (e) { return e.name; })
-      .filter(function (name) { return state.checkedEmployees.has(name); });
+    const checkedNames = orderedCheckedNames_();
     renderGanttInto_(document.getElementById('ganttGrid'), state.date, state.schedules, state.attendance, checkedNames);
   }
 
@@ -4096,11 +4443,14 @@
   // ==== 予定 作成・編集モーダル ====
   function populateEmployeeSelect() {
     const sel = document.getElementById('fEmployee');
-    EMPLOYEES.forEach(function (emp) {
+    const prevValue = sel.value;
+    sel.innerHTML = '';
+    orderedEmployees_().forEach(function (emp) {
       const opt = document.createElement('option');
       opt.value = emp.name; opt.textContent = emp.name;
       sel.appendChild(opt);
     });
+    if (prevValue && sbEmployeeExists_(prevValue)) sel.value = prevValue;
   }
 
   function populateTimeSelects() {
@@ -4231,7 +4581,7 @@
     document.getElementById('dateFieldRow').hidden = false;
     document.getElementById('multiDateRow').hidden = true;
     multiSelectedDates = new Set();
-    document.getElementById('fEmployee').value = schedule ? schedule.employeeName : (prefill && prefill.employeeName) || EMPLOYEES[0].name;
+    document.getElementById('fEmployee').value = schedule ? schedule.employeeName : (prefill && prefill.employeeName) || orderedEmployees_()[0].name;
     document.getElementById('fDate').value = schedule ? schedule.date : (prefill && prefill.date) || state.date;
     multiCalMonth = (schedule ? schedule.date : (prefill && prefill.date) || state.date).slice(0, 7);
     document.getElementById('fAllDay').checked = schedule ? schedule.allDay : false;
@@ -4259,7 +4609,7 @@
   function populateMultiEmployeeList() {
     const wrap = document.getElementById('multiEmployeeList');
     wrap.innerHTML = '';
-    EMPLOYEES.map(function (e) { return e.name; })
+    orderedEmployees_().map(function (e) { return e.name; })
       .filter(function (n) { return state.checkedEmployees.has(n); }) // 表示中の社員のみを候補にする
       .forEach(function (n) {
         const label = document.createElement('label');
