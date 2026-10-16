@@ -357,6 +357,10 @@
       background: var(--accent-light); border-color: var(--accent); color: var(--accent-text); font-weight: 700;
     }
     .groupChip.addChip { color: var(--text-secondary); border-style: dashed; }
+    /* 「自分のみ表示」：チップ行の先頭に置く（末尾の「＋ 選択」はスマホ幅だと横スクロールしないと
+       見えないため）。グループ名のチップと区別できるよう、アクセント色の文字にする */
+    .groupChip.selfOnlyChip { color: var(--accent-text); border-color: var(--border-strong); font-weight: 700; }
+    .groupChip.selfOnlyChip.selected { border-color: var(--accent); }
 
     /* 週ストリップ（月〜日7日分）。横幅の広い画面で間延びしないよう最大幅を設けて中央寄せ */
     .weekStrip {
@@ -553,7 +557,10 @@
     }
     .hourLabel.first, .hourLabel.last { transform: none; }
     .empRow { display: flex; border-bottom: 1px solid var(--border); position: relative; }
+    /* 日表示だけ、最下行の下にも他の行と同じ区切り線を付ける（月表示の各日ブロックは外枠が
+       あるため従来どおり付けず、二重線にしない） */
     .empRow:last-child { border-bottom: none; }
+    #ganttScroll .empRow:last-child { border-bottom: 1px solid var(--border); }
     .empRow.dayOff { background: var(--dayoff-bg); color: var(--text-muted); }
     .empRow.dayOff .empNameCell, .empRow.dayOff .empAttendanceCell,
     .empRow.dayOff .empAllDayCell, .empRow.dayOff .empMemoCell { background: var(--dayoff-bg); }
@@ -648,6 +655,19 @@
       border: 1px solid rgba(0,0,0,0.08); white-space: pre-wrap; text-overflow: ellipsis;
       box-shadow: 0 1px 2px rgba(0,0,0,0.06); display: flex; align-items: flex-start;
       color: var(--emp-color-text);
+    }
+    /* 予定名が時間枠より長いとき：バー本体（予定の時間の範囲）は濃い色のままタップできる。
+       はみ出した部分は背景を持たず、文字（.blockTextExt）だけを予定の色で重ねる。
+       .blockTextExtはpointer-events:noneなので、タップ・ホバーは下の空き枠に届く */
+    .scheduleBlock.hasExt { overflow: visible; }
+    .scheduleBlock.hasExt .blockTextBody {
+      flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: pre;
+      margin-right: -6px; padding-right: 6px; /* 本体の右端（枠線の内側）まで文字を見せる */
+    }
+    .scheduleBlock .blockTextExt {
+      position: absolute; left: 6px; top: 2px; white-space: pre; pointer-events: none;
+      /* 本体の範囲（左側）は.blockTextBody側で表示するため、ここでは本体より右だけを見せる
+         （clip-pathの左側の切り取り量はJSが設定する） */
     }
     .nowLine {
       position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--now-line);
@@ -2119,6 +2139,13 @@
     if (!wrap) return;
     wrap.innerHTML = '';
     const selected = document.getElementById('groupSelect').value;
+    const selfChip = document.createElement('button');
+    selfChip.type = 'button';
+    selfChip.className = 'groupChip selfOnlyChip' + (isSelfOnlyActive_() ? ' selected' : '');
+    selfChip.id = 'selfOnlyBtn';
+    selfChip.textContent = '自分のみ表示';
+    selfChip.addEventListener('click', showSelfOnly_);
+    wrap.appendChild(selfChip);
     getAllGroups().forEach(function (g) {
       const chip = document.createElement('button');
       chip.type = 'button';
@@ -2136,6 +2163,36 @@
     addChip.textContent = '＋ 選択';
     addChip.addEventListener('click', openMemberSelectFromChip_);
     wrap.appendChild(addChip);
+  }
+
+  // ログイン中のメールに対応する社員マスタの行（B列）。閲覧編集ユーザーなど対応が無ければnull
+  function findSelfEmployee_() {
+    return EMPLOYEES.filter(function (e) { return isSelfEmployee_(e.name); })[0] || null;
+  }
+
+  // 表示対象が本人だけで、どのグループも選ばれていない状態か（チップの選択表示・帯の表示用）
+  function isSelfOnlyActive_() {
+    const me = findSelfEmployee_();
+    return !!me && document.getElementById('groupSelect').value === ''
+      && state.checkedEmployees.size === 1 && state.checkedEmployees.has(me.name);
+  }
+
+  // 「自分のみ表示」：表示対象を本人だけにして、月表示へ切り替える（ひと月分の自分の予定を
+  // まとめて入力するため）。元の選択へ戻す機能は持たず、グループのチップ・メンバー選択・
+  // 日/月タブを普通に操作すれば戻せる。本人が社員マスタに居ない場合は何も変えない
+  function showSelfOnly_() {
+    const me = findSelfEmployee_();
+    if (!me) { showToast('あなたは表示できるメンバーに含まれていません'); return; }
+    state.checkedEmployees = new Set([me.name]);
+    document.querySelectorAll('#employeeList .employeeChip').forEach(function (label) {
+      const checkbox = label.querySelector('input');
+      const checked = checkbox.dataset.name === me.name;
+      checkbox.checked = checked;
+      label.classList.toggle('checked', checked);
+    });
+    document.getElementById('groupSelect').value = '';
+    switchView('month');
+    renderCurrentView();
   }
 
   function populateEmployeeList() {
@@ -2612,7 +2669,7 @@
   // groupSelectの値で判断する（applyGroupがgroupSelectを更新するため、チップ・一覧と常に一致する）
   function renderSlimGroupLabel_() {
     const name = document.getElementById('groupSelect').value;
-    document.getElementById('slimGroupName').textContent = name || 'グループ未選択';
+    document.getElementById('slimGroupName').textContent = name || (isSelfOnlyActive_() ? '自分のみ' : 'グループ未選択');
     document.getElementById('slimGroupMark').textContent = (name && name === MY_GROUP_SETTINGS.defaultGroup) ? '★' : '';
   }
 
@@ -3933,13 +3990,6 @@
     return { width: availWidth, overflow: canExtend, lines: lines };
   }
 
-  function hexToRgba_(hex, alpha) {
-    const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return hex;
-    const num = parseInt(m[1], 16);
-    return 'rgba(' + ((num >> 16) & 255) + ',' + ((num >> 8) & 255) + ',' + (num & 255) + ',' + alpha + ')';
-  }
-
   // top は呼び出し元（renderEmployeeRow）がレーン内の位置決定後にまとめて設定する。
   // laneInfo（assignLanesの結果）・slotHeight（そのレーンに割り当てられた縦幅）から、
   // 右にはみ出せる幅・縦に伸びられる上限を算出し、幅・高さ・表示テキストをここで決める
@@ -3960,9 +4010,9 @@
     const layout = layoutScheduleBlockText_(s.content, timeWidthPx, maxExtendWidthPx, maxHeightPx);
 
     block.style.left = leftPx + 'px';
-    block.style.width = layout.width + 'px';
+    // はみ出す場合も、バー本体（濃い色・タップ対象）は予定の時間の幅のまま。はみ出した文字は別要素で重ねる
+    block.style.width = (layout.overflow ? timeWidthPx : layout.width) + 'px';
     block.style.height = Math.min(maxHeightPx, Math.max(MIN_LANE_HEIGHT - 2, layout.lines.length * SCHEDULE_BLOCK_LINE_HEIGHT)) + 'px';
-    block.textContent = layout.lines.join('\n');
 
     const customColor = s.color && SCHEDULE_COLOR_HEX[s.color];
     const baseColor = customColor || EMP_COLORS[colorIdx % EMP_COLORS.length];
@@ -3970,14 +4020,25 @@
     // customColor無し（EMP_COLORSの淡い配色）の場合は空文字に戻し、CSS側の--emp-color-text
     // （テーマに関わらず固定の濃色）を使う
     block.style.color = customColor ? 'var(--overlay-text)' : '';
+    block.style.background = baseColor;
     if (layout.overflow) {
-      // はみ出した部分（実際の予定時間を超えた範囲）は、同じ色の半透明にして薄く見せる。
-      // クリック・ホバーは要素全体にかかるため、はみ出し部分でも編集が開く／ツールチップが出る
-      const boundaryPct = Math.min(100, (timeWidthPx / layout.width) * 100);
-      block.style.background = 'linear-gradient(to right, ' + baseColor + ' 0 ' + boundaryPct + '%, '
-        + hexToRgba_(baseColor, 0.4) + ' ' + boundaryPct + '% 100%)';
+      block.classList.add('hasExt');
+      const text = layout.lines.join('\n');
+      const body = document.createElement('span');
+      body.className = 'blockTextBody';
+      body.textContent = text;
+      block.appendChild(body);
+      // はみ出した部分は背景なし・文字だけ。予定色（既定の淡い色は白地で読めないため、テーマの文字色）で出す。
+      // 位置・折返しは本体と同じ文字列・同じ起点にし、本体の範囲より左は切り取って二重に描かない
+      const ext = document.createElement('span');
+      ext.className = 'blockTextExt';
+      ext.setAttribute('aria-hidden', 'true');
+      ext.textContent = text;
+      ext.style.color = customColor || 'var(--text-primary)';
+      ext.style.clipPath = 'inset(0 0 0 ' + Math.max(0, timeWidthPx - 8) + 'px)';
+      block.appendChild(ext);
     } else {
-      block.style.background = baseColor;
+      block.textContent = layout.lines.join('\n');
     }
 
     const tooltipLines = [s.startTime + '〜' + s.endTime];
