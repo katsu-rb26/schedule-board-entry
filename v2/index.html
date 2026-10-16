@@ -1423,8 +1423,13 @@
       });
   }
 
+  // 実際のgoogle.script.runと同じく、withSuccessHandler/withFailureHandlerは何回でも・どの順でも
+  // 組み合わせられ、どの段階でもサーバー関数を直接呼べる（後から指定したハンドラが優先される）
   function sbMakeRunCaller_(successHandler, failureHandler) {
-    const proxy = {};
+    const proxy = {
+      withSuccessHandler: function (handler) { return sbMakeRunCaller_(handler, failureHandler); },
+      withFailureHandler: function (handler) { return sbMakeRunCaller_(successHandler, handler); }
+    };
     SB_ALLOWED_RUN_FUNCTIONS_.forEach(function (fnName) {
       proxy[fnName] = function () {
         sbCall_(fnName, Array.prototype.slice.call(arguments), successHandler, failureHandler);
@@ -1433,19 +1438,10 @@
     return proxy;
   }
 
-  // 既存コードの google.script.run.withSuccessHandler(f).withFailureHandler(g).関数名(引数...) という
+  // 既存コードの google.script.run.withSuccessHandler(f).withFailureHandler(g).関数名(引数...) などの
   // 書き方をそのまま使えるようにする互換shim。中身はcallアクションのfetchに変換する。
   window.google = window.google || {};
-  window.google.script = {
-    run: {
-      withSuccessHandler: function (successHandler) {
-        return { withFailureHandler: function (failureHandler) { return sbMakeRunCaller_(successHandler, failureHandler); } };
-      },
-      withFailureHandler: function (failureHandler) {
-        return { withSuccessHandler: function (successHandler) { return sbMakeRunCaller_(successHandler, failureHandler); } };
-      }
-    }
-  };
+  window.google.script = { run: sbMakeRunCaller_(null, null) };
 
   // ==== v2追加：ログイン画面・起動シーケンス ====
   function sbIsStandalone_() {
