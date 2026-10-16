@@ -3899,7 +3899,10 @@
   //    折り返し、メンバー行の高さ相当（maxHeightPx）を超えたら最後の行を「…」で省略する
   function layoutScheduleBlockText_(content, timeWidthPx, maxExtendWidthPx, maxHeightPx) {
     const ctx = scheduleTextCtx_();
-    const paragraphs = (content || '(内容なし)').split('\n');
+    // バー上の表示用にだけ、改行（\r\n・\n・\r）を半角スペース1つにして1段落として扱う（保存データ・ツールチップ・編集画面の
+    // 元の文字列は変えない）。改行が残ると行数が増えて「収まらない」判定になり、短い予定名でも
+    // 折返し分岐で幅が右端（maxExtendWidthPx）まで広がり、薄い色のラインが際限なく伸びていた
+    const paragraphs = [(content || '(内容なし)').replace(/\r\n|\r|\n/g, ' ')];
     const maxLines = Math.max(1, Math.floor(maxHeightPx / SCHEDULE_BLOCK_LINE_HEIGHT));
 
     const rawWidths = paragraphs.map(function (p) { return ctx.measureText(p).width; });
