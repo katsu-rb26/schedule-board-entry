@@ -64,6 +64,7 @@
          ダーク時のアクセント（明るいオレンジ）に白文字を重ねてコントラスト不足になるのを防ぐ */
       --on-accent: #fff;
       --danger: #A33A2C;
+      --ok: #2E7D4F;
       --danger-hover: #82271C;
       --sat-color: #2C6FBB;
       --sun-color: #C0392B;
@@ -115,6 +116,7 @@
         --accent-text: #f0c58c;
         --on-accent: #1e2338;
         --danger: #e0785f;
+        --ok: #7fcf9a;
         --danger-hover: #ea9075;
         --sat-color: #7ab6f0;
         --sun-color: #e0785f;
@@ -150,6 +152,7 @@
       --accent-text: #f0c58c;
       --on-accent: #1e2338;
       --danger: #e0785f;
+      --ok: #7fcf9a;
       --danger-hover: #ea9075;
       --sat-color: #7ab6f0;
       --sun-color: #e0785f;
@@ -504,8 +507,6 @@
       border: none; background: transparent; padding: 4px 0; font-size: 12.5px;
       color: var(--accent-text); text-decoration: underline; cursor: pointer;
     }
-    .reorderSaved { font-size: 12px; color: var(--text-muted); }
-    .reorderSaved[hidden] { display: none; }
     .drawerDivider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     .drawerFootnote { font-size: 10.5px; color: var(--text-muted); margin: 4px 0 0; }
 
@@ -801,13 +802,27 @@
       display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 32px);
     }
     .toast[hidden] { display: none; }
-    /* 並び順の保存の結果。モーダルを閉じた後でも見えるよう、モーダルの外の画面下に出す（トーストより下の段） */
-    .orderSaveStatus {
-      position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%);
-      background: var(--overlay-bg); color: var(--overlay-text); padding: 8px 14px; border-radius: 8px;
-      font-size: 12.5px; z-index: 200; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    /* 保存の表示（画面中央の小さなカード）。画面は暗くせず、クリックも通す（二重押しの防止はstate.savingなどが担う） */
+    .saveIndicator {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-strong);
+      padding: 12px 20px; border-radius: 10px; font-size: 14px; z-index: 300;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25); pointer-events: none; text-align: center;
+      max-width: calc(100vw - 32px); animation: saveIndicatorIn 0.15s ease-out;
     }
-    .orderSaveStatus[hidden] { display: none; }
+    .saveIndicator[hidden] { display: none; }
+    .saveIndicator .saveIndicatorMain { display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .saveIndicator .saveIndicatorSub { margin-top: 4px; font-size: 11.5px; color: var(--text-secondary); }
+    .saveIndicator .saveIndicatorSub[hidden] { display: none; }
+    .saveIndicator .saveIndicatorSpin {
+      width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong);
+      border-top-color: var(--accent); animation: saveIndicatorSpin 0.8s linear infinite; flex: none;
+    }
+    .saveIndicator .saveIndicatorCheck { color: var(--ok); font-weight: bold; }
+    .saveIndicator.isError { border-color: var(--danger); color: var(--danger); }
+    .saveIndicator.isError .saveIndicatorSub { color: var(--danger); }
+    @keyframes saveIndicatorIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes saveIndicatorSpin { to { transform: rotate(360deg); } }
     .toast button {
       background: transparent; border: 1px solid rgba(255,255,255,0.45); color: var(--overlay-text);
       padding: 3px 10px; border-radius: 5px; font-size: 11.5px; white-space: nowrap;
@@ -1410,7 +1425,6 @@
       <div class="reorderScroll" id="reorderScrollGroups" hidden></div>
       <div class="reorderFooter">
         <button type="button" class="reorderResetLink" id="reorderResetBtn">初期の並びに戻す</button>
-        <span class="reorderSaved" id="reorderSavedMsg" role="status" aria-live="polite" hidden>保存しました</span>
       </div>
     </div>
   </div>
@@ -1442,7 +1456,7 @@
   <!-- トースト通知（エラー表示・削除後の「元に戻す」導線用。alert()もサンドボックス内で
        ブロックされることがあるため、これで代替する） -->
   <div class="toast" id="toast" hidden></div>
-  <div class="orderSaveStatus" id="orderSaveStatus" role="status" aria-live="polite" hidden></div>
+  <div class="saveIndicator" id="saveIndicator" role="status" aria-live="polite" hidden></div>
 
   <!-- 独自ツールチップ（ブラウザ標準title属性は表示までに遅延があるため、ホバーで即時表示する） -->
   <div class="customTooltip" id="customTooltip" hidden></div>
@@ -1478,7 +1492,7 @@
   let syncInFlight_ = false;
   let syncFailCount_ = 0;
   let syncTimer_ = null;
-  let syncWritesInFlight_ = 0; // 通信中の予定・出退勤・マスタの保存の数
+  let syncWritesInFlight_ = 0; // 通信中の保存の数（予定・出退勤・マスタ・並び順・個人設定）。他の端末の変更の確認の保留と、保存の表示の両方が使う（名前は従来のまま）
   // 月データ（予定・出退勤）の「書き込みの世代」。保存の開始時と完了時にそれぞれ1ずつ進める。
   // 月の取り直しは、開始時の世代を覚えておき、応答が届いたときに世代が変わっている／保存中なら捨てる
   let monthWriteGen_ = 0;
@@ -1560,6 +1574,74 @@
     'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion'
   ];
 
+  // ==== 保存の表示（画面中央のカード） ====
+  // 保存を始めてSAVE_UI_DELAY_MS経っても終わらないときだけ「保存しています…」を出す。すぐ終われば「保存しました」だけ。
+  // 通信中の保存（syncWritesInFlight_）が1つでもある間は出しっぱなしにし、全部終わってから1回だけ結果を出す
+  const SAVE_UI_DELAY_MS = 300; // この時間たっても終わらないときだけ「保存中です…」を出す
+  const SAVE_UI_DONE_MS = 1200; // 「保存しました」を出している時間
+  const SAVE_UI_ERROR_MS = 5000; // 「保存できませんでした」を出している時間
+  const SAVE_UI_FNS_ = Object.keys(SYNC_WRITE_FNS_).concat([
+    'saveMyMemberOrder', 'saveMyGroupOrder', 'saveMyCustomGroups', 'setMyDefaultGroup', 'saveThemeModePref'
+  ]);
+  const saveUi_ = { delayTimer: null, hideTimer: null, failure: null };
+
+  function saveUiRender_(kind, err) {
+    const el = document.getElementById('saveIndicator');
+    el.textContent = '';
+    el.className = 'saveIndicator' + (kind === 'error' ? ' isError' : '');
+    const main = document.createElement('div');
+    main.className = 'saveIndicatorMain';
+    const mark = document.createElement('span');
+    if (kind === 'saving') mark.className = 'saveIndicatorSpin';
+    else if (kind === 'saved') { mark.className = 'saveIndicatorCheck'; mark.textContent = '✓'; }
+    const label = document.createElement('span');
+    label.textContent = kind === 'saving' ? '保存中です…' : (kind === 'saved' ? '保存しました' : '保存できませんでした');
+    if (kind !== 'error') main.appendChild(mark);
+    main.appendChild(label);
+    el.appendChild(main);
+    if (kind === 'error') {
+      const detail = (err && err.message) ? err.message : String(err || '');
+      [detail, 'もう一度お試しください（入力した内容は残っています）'].forEach(function (line) {
+        if (!line) return;
+        const sub = document.createElement('div');
+        sub.className = 'saveIndicatorSub';
+        sub.textContent = line;
+        el.appendChild(sub);
+      });
+    }
+    el.hidden = false;
+  }
+
+  function saveUiHide_() {
+    saveUi_.hideTimer = null;
+    document.getElementById('saveIndicator').hidden = true;
+  }
+
+  function saveUiStarted_() {
+    if (syncWritesInFlight_ !== 1) return; // 続けて始まった保存は、同じ表示にまとまる
+    saveUi_.failure = null;
+    clearTimeout(saveUi_.delayTimer);
+    saveUi_.delayTimer = setTimeout(function () {
+      saveUi_.delayTimer = null;
+      clearTimeout(saveUi_.hideTimer);
+      saveUi_.hideTimer = null;
+      if (syncWritesInFlight_ > 0) saveUiRender_('saving');
+    }, SAVE_UI_DELAY_MS);
+  }
+
+  // 保存が1つ終わった（成功・失敗）。呼び出し元の完了処理が済んだ後に呼ぶ（そこから次の保存が始まることがあるため）
+  function saveUiSettled_(err) {
+    if (err) saveUi_.failure = err;
+    if (syncWritesInFlight_ > 0) return;
+    clearTimeout(saveUi_.delayTimer);
+    saveUi_.delayTimer = null;
+    const failure = saveUi_.failure;
+    saveUi_.failure = null;
+    saveUiRender_(failure ? 'error' : 'saved', failure);
+    clearTimeout(saveUi_.hideTimer);
+    saveUi_.hideTimer = setTimeout(saveUiHide_, failure ? SAVE_UI_ERROR_MS : SAVE_UI_DONE_MS);
+  }
+
   // 無応答のタイムアウトを入れる関数（ms）。並び順の保存だけに適用し、他の呼び出しの挙動は変えない。
   // テストだけ window.__SB_TEST_ORDER_TIMEOUT_MS__ で短縮できる
   const SB_CALL_TIMEOUT_MS_ = { saveMyMemberOrder: 30000 };
@@ -1607,15 +1689,17 @@
     SB_ALLOWED_RUN_FUNCTIONS_.forEach(function (fnName) {
       proxy[fnName] = function () {
         const args = Array.prototype.slice.call(arguments);
-        if (!Object.prototype.hasOwnProperty.call(SYNC_WRITE_FNS_, fnName)) {
+        if (SAVE_UI_FNS_.indexOf(fnName) === -1) {
           sbCall_(fnName, args, successHandler, failureHandler);
           return;
         }
         // 保存の通信中は、他の端末の変更の確認をしない（syncWritesInFlight_）。完了（成功・失敗）で1回だけ減らす
         let counted = true;
+        let uiOpen = true;
         const touchesMonth = SYNC_WRITE_FNS_[fnName] === 'schedule' || SYNC_WRITE_FNS_[fnName] === 'attendance';
         syncWritesInFlight_++;
         if (touchesMonth) { monthWriteGen_++; monthWritesInFlight_++; }
+        saveUiStarted_();
         const done = function () {
           if (!counted) return;
           counted = false;
@@ -1627,9 +1711,21 @@
             if (monthWritesInFlight_ === 0 && staleMonthKeys_.size > 0) setTimeout(refetchStaleMonths_, 0);
           }
         };
+        const finishUi = function (err) {
+          if (!uiOpen) return;
+          uiOpen = false;
+          saveUiSettled_(err);
+        };
         sbCall_(fnName, args,
-          function (data) { done(); if (successHandler) successHandler(data); },
-          function (err) { done(); if (failureHandler) failureHandler(err); });
+          function (data) {
+            done();
+            try { if (successHandler) successHandler(data); } finally { finishUi(null); }
+          },
+          function (err) {
+            done();
+            if (err && typeof err === 'object') err.shownInSaveUi = true; // 中央の表示に出すので、showRunErrorではトーストにしない
+            try { if (failureHandler) failureHandler(err); } finally { finishUi(err); }
+          });
       };
     });
     return proxy;
@@ -3207,8 +3303,6 @@
   // メンバー用とグループ用は、この同じ仕組み（createOrderSaver_）を使う
   let memberReorderList_ = null;
   let groupReorderList_ = null;
-  let reorderSavedTimer_ = null;
-  let orderSaveStatus_ = ''; // '' | 'saving' | 'saved'
   const orderSavers_ = [];
 
   // opts.apply(names): 動かした順を画面へ反映する／opts.send(names, onSuccess, onFailure): サーバーへ送る
@@ -3228,7 +3322,6 @@
         saver.pending = null;
         if (!sending) { saver.inFlight = false; return; }
         saver.inFlight = true;
-        setOrderSaveStatus_('saving');
         let settled = false;
         // 結果は1回だけ処理する（成功の途中で例外が出て失敗側に回ってきた場合などの二重処理を防ぐ）
         function settle() {
@@ -3243,8 +3336,6 @@
             opts.confirm(result, sending);
           } finally {
             if (saver.pending) saver.flush();
-            else if (anyOrderSaverInFlight_()) setOrderSaveStatus_('saving');
-            else showReorderSaved_();
           }
         }
         function onFailure(err) {
@@ -3255,7 +3346,6 @@
             saver.flush();
             return;
           }
-          setOrderSaveStatus_(anyOrderSaverInFlight_() ? 'saving' : '');
           opts.rollback();
           showRunError(err);
         }
@@ -3268,10 +3358,6 @@
     };
     orderSavers_.push(saver);
     return saver;
-  }
-
-  function anyOrderSaverInFlight_() {
-    return orderSavers_.some(function (sv) { return sv.inFlight; });
   }
 
   function applyOrderToViews_() {
@@ -3330,28 +3416,6 @@
   function setMemberOrder_(names) { memberOrderSaver_.set(names); }
   function setGroupOrder_(names) { groupOrderSaver_.set(names); }
 
-  // モーダルが開いている間は中の「保存しました」、閉じている間は画面下の表示に出す
-  function renderOrderSaveStatus_() {
-    const modalOpen = !document.getElementById('reorderOverlay').hidden;
-    document.getElementById('reorderSavedMsg').hidden = !(modalOpen && orderSaveStatus_ === 'saved');
-    const ext = document.getElementById('orderSaveStatus');
-    ext.hidden = modalOpen || !orderSaveStatus_;
-    ext.textContent = orderSaveStatus_ === 'saving' ? '保存中…' : (orderSaveStatus_ === 'saved' ? '保存しました' : '');
-  }
-
-  function setOrderSaveStatus_(status) {
-    orderSaveStatus_ = status;
-    clearTimeout(reorderSavedTimer_);
-    if (status === 'saved') {
-      reorderSavedTimer_ = setTimeout(function () { orderSaveStatus_ = ''; renderOrderSaveStatus_(); }, 1800);
-    }
-    renderOrderSaveStatus_();
-  }
-
-  function showReorderSaved_() {
-    setOrderSaveStatus_('saved');
-  }
-
   // グループ行の印：共有／作成（同じ名前が両方あるときは両方）。既定グループには「★既定」
   function groupBadgesFor_(name) {
     const types = getAllGroups().filter(function (g) { return g.name === name; }).map(function (g) { return g.type; });
@@ -3390,7 +3454,6 @@
     }
     setReorderTab_('members');
     document.getElementById('reorderOverlay').hidden = false;
-    renderOrderSaveStatus_();
     document.getElementById('reorderDoneBtn').focus();
   }
 
@@ -3398,7 +3461,6 @@
   function closeReorderModal_() {
     document.getElementById('reorderOverlay').hidden = true;
     orderSavers_.forEach(function (sv) { if (sv.pending && !sv.inFlight) sv.flush(); });
-    renderOrderSaveStatus_();
   }
 
   // 「初期の並びに戻す」：確認を出してから、表示中のタブ（メンバー／グループ）の順を空にして保存する
@@ -5415,6 +5477,7 @@
   }
 
   function showRunError(err) {
+    if (err && err.shownInSaveUi) return;
     showToast((err && err.message) ? err.message : String(err));
   }
 
