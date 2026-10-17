@@ -453,7 +453,7 @@
     }
     .drawerSection { margin-bottom: 18px; }
 
-    /* ==== 並び順を編集（メンバー／将来グループにも使い回す一覧部品） ==== */
+    /* ==== 並び順を編集（メンバー・グループで使い回す一覧部品） ==== */
     .toggleListBtn.entryBtn { min-height: 36px; margin-top: 6px; }
     .reorderBox { width: 400px; display: flex; flex-direction: column; }
     .reorderHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
@@ -465,6 +465,13 @@
     }
     .reorderTab.active { color: var(--accent-text); border-bottom-color: var(--accent); font-weight: 700; }
     .reorderTab:disabled { color: var(--text-muted); opacity: 0.55; cursor: not-allowed; }
+    .reorderScroll[hidden] { display: none; }
+    .reorderBadge {
+      flex: 0 0 auto; font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+      color: var(--text-secondary); border: 1px solid var(--border-strong); white-space: nowrap;
+    }
+    .reorderBadge.isDefault { color: var(--accent-text); border-color: var(--accent); }
+    #confirmOverlay { z-index: 110; }
     .reorderScroll {
       overflow-y: auto; -webkit-overflow-scrolling: touch;
       max-height: calc(100vh - 250px); max-height: calc(100dvh - 250px); min-height: 80px;
@@ -1388,7 +1395,7 @@
     </div>
   </div>
 
-  <!-- 並び順を編集（本人専用。今回はメンバーのみ。グループタブは後日有効にする） -->
+  <!-- 並び順を編集（本人専用。メンバー・グループ） -->
   <div class="modalOverlay" id="reorderOverlay" hidden>
     <div class="modalBox reorderBox" role="dialog" aria-modal="true" aria-labelledby="reorderTitle">
       <div class="reorderHeader">
@@ -1397,9 +1404,10 @@
       </div>
       <div class="reorderTabs" role="tablist">
         <button type="button" class="reorderTab active" role="tab" aria-selected="true" id="reorderTabMembers">メンバー</button>
-        <button type="button" class="reorderTab" role="tab" aria-selected="false" id="reorderTabGroups" disabled title="準備中">グループ</button>
+        <button type="button" class="reorderTab" role="tab" aria-selected="false" id="reorderTabGroups">グループ</button>
       </div>
       <div class="reorderScroll" id="reorderScroll"></div>
+      <div class="reorderScroll" id="reorderScrollGroups" hidden></div>
       <div class="reorderFooter">
         <button type="button" class="reorderResetLink" id="reorderResetBtn">初期の並びに戻す</button>
         <span class="reorderSaved" id="reorderSavedMsg" role="status" aria-live="polite" hidden>保存しました</span>
@@ -1453,6 +1461,8 @@
   // サーバーが保存を確認した順（保存失敗時に画面をここへ戻す）
   let MY_ORDER = { members: [], groups: [] };
   let MY_ORDER_CONFIRMED_ = [];
+  let MY_ORDER_CONFIRMED_GROUPS_ = [];
+  let lastOrderRefreshAt_ = 0; // 並び順を最後に取得した（起動時の取得を含む）時刻
   let TODAY_STR = '';
   let CURRENT_EMAIL = '';
   let IS_MASTER_ADMIN = false;
@@ -1687,12 +1697,15 @@
     // 古いサーバーにはmyOrderJsonが無い。無い・壊れている場合は空（社員マスタ順）として扱う
     // 並び順の保存中・保存待ちがあるときは、画面のメンバー順（より新しい）を古い順で上書きしない
     const incomingOrder = sbParseMyOrder_(data.myOrderJson);
-    if (memberOrderInFlight_ || memberOrderPending_) {
-      MY_ORDER.groups = incomingOrder.groups;
-    } else {
-      MY_ORDER = incomingOrder;
-      MY_ORDER_CONFIRMED_ = MY_ORDER.members.slice();
+    if (!memberOrderSaver_.busy()) {
+      MY_ORDER.members = incomingOrder.members;
+      MY_ORDER_CONFIRMED_ = incomingOrder.members.slice();
     }
+    if (!groupOrderSaver_.busy()) {
+      MY_ORDER.groups = incomingOrder.groups;
+      MY_ORDER_CONFIRMED_GROUPS_ = incomingOrder.groups.slice();
+    }
+    lastOrderRefreshAt_ = Date.now();
     // サーバーの今日の日付を使う。形が不正・欠落していたらブラウザの今日の日付を使う
     TODAY_STR = /^\d{4}-\d{2}-\d{2}$/.test(data.todayStr || '') ? data.todayStr : sbBrowserTodayStr_();
     CURRENT_EMAIL = data.userEmail;
@@ -2242,10 +2255,37 @@
 
   // 共有グループ（Kicks／プランナー等、事業部ベース）と、本人専用のオリジナルグループ
   // （チェックしたメンバーを直接保存したもの）をまとめて1つのリストとして扱う
+  // 並びは個人ごとの保存済みの順（MY_ORDER.groups）に従う。保存済みの順に載っていないグループ
+  // （新しく作った・追加された）は末尾に、現在の並び（共有→作成）で出す。保存済みの順にあって今は
+  // 存在しない名前は無視する。保存済みの順が空なら、現在の並び（共有→作成）のまま。
+  // 共有グループと作成グループが同じ名前のときは、同じ位置に（共有→作成の順で）並べる
+  // （保存する順は名前のみのため。既存のとおり、名前で選ぶ処理は先頭の1つを使う）
   function getAllGroups() {
     const shared = GROUPS.map(function (g) { return { name: g.name, type: 'shared', department: g.department }; });
     const custom = (MY_GROUP_SETTINGS.groups || []).map(function (g) { return { name: g.name, type: 'custom', members: g.members || [] }; });
-    return shared.concat(custom);
+    const base = shared.concat(custom);
+    const saved = (MY_ORDER && MY_ORDER.groups) || [];
+    if (!saved.length) return base;
+    const byName = new Map();
+    base.forEach(function (g) {
+      if (!byName.has(g.name)) byName.set(g.name, []);
+      byName.get(g.name).push(g);
+    });
+    const out = [];
+    saved.forEach(function (n) {
+      const list = byName.get(n);
+      if (list) { list.forEach(function (g) { out.push(g); }); byName.delete(n); }
+    });
+    base.forEach(function (g) { if (byName.has(g.name)) out.push(g); });
+    return out;
+  }
+
+  // 並べ替え画面用：グループ名の一覧（並び順どおり。同じ名前は1行にまとめる）
+  function orderedGroupNames_() {
+    const seen = new Set();
+    const out = [];
+    getAllGroups().forEach(function (g) { if (!seen.has(g.name)) { seen.add(g.name); out.push(g.name); } });
+    return out;
   }
 
   function defaultCheckFirstGroup() {
@@ -2542,7 +2582,9 @@
     });
     document.getElementById('openReorderBtn').addEventListener('click', openReorderModal_);
     document.getElementById('reorderDoneBtn').addEventListener('click', closeReorderModal_);
-    document.getElementById('reorderResetBtn').addEventListener('click', resetMemberOrder_);
+    document.getElementById('reorderResetBtn').addEventListener('click', resetOrder_);
+    document.getElementById('reorderTabMembers').addEventListener('click', function () { setReorderTab_('members'); });
+    document.getElementById('reorderTabGroups').addEventListener('click', function () { setReorderTab_('groups'); });
     // 日付ボタン（期間タイトル・縮んだ帯のどちらも）は、ドロワーの日付欄（dateInput）を使わず、
     // 真下に開く小さなカレンダーで選ぶ（dateInputは画面外に隠れているため、ネイティブのピッカーが
     // 左端に出てしまっていた）。もう一度押すと閉じる
@@ -2896,7 +2938,8 @@
       .filter(function (name) { return state.checkedEmployees.has(name); });
   }
 
-  // 並べ替え一覧の部品（メンバー用・将来のグループ用で共用）。
+  // 並べ替え一覧の部品（メンバー用・グループ用で共用）。
+  // opts.badgesFor(name)（任意）: 行の名前の右に出す印の配列 [{ text, cls }]。
   // host: 縦スクロールする入れ物。opts.onChange(newItems, prevItems): 順が確定するたびに1回だけ呼ぶ。
   // ドラッグ中は一覧を描き直さず、掴んだ行と他の行をtranslateYで動かすだけにする（描き直すと掴んだ行が
   // 入れ替わって指が外れるため）。順の確定・再描画は指を離した時点（pointerup）の1回だけ
@@ -2965,6 +3008,14 @@
 
         row.appendChild(handle);
         row.appendChild(label);
+        if (opts.badgesFor) {
+          opts.badgesFor(name).forEach(function (b) {
+            const badge = document.createElement('span');
+            badge.className = 'reorderBadge' + (b.cls ? ' ' + b.cls : '');
+            badge.textContent = b.text;
+            row.appendChild(badge);
+          });
+        }
         row.appendChild(up);
         row.appendChild(down);
         list.appendChild(row);
@@ -3058,17 +3109,81 @@
     };
   }
 
-  // メンバー順の保存：動かすたびに自動保存する。保存は直列（同時に1つだけ送り、送信中に
-  // 来た変更は最新の1つにまとめて、前の保存が終わってから送る）なので、最後の順が必ず残る。
+  // 並び順（メンバー・グループ）の保存：動かすたびに自動保存する。保存は直列（同時に1つだけ送り、
+  // 送信中に来た変更は最新の1つにまとめて、前の保存が終わってから送る）なので、最後の順が必ず残る。
   // モーダルを閉じても保存は止まらず、結果（保存中／保存しました）は閉じた後も画面下に出る。
   // 送信中フラグは、成功・失敗・例外・タイムアウト（sbFetch_）のどれでも必ず戻る。
   // 失敗したら、保存待ちが無ければサーバーが最後に確認した順へ画面を戻してshowRunErrorで知らせる。
-  // 保存待ちがあるときは、その（より新しい）順を送り直し、それも失敗したら戻す
-  let memberOrderInFlight_ = false;
-  let memberOrderPending_ = null;
+  // 保存待ちがあるときは、その（より新しい）順を送り直し、それも失敗したら戻す。
+  // メンバー用とグループ用は、この同じ仕組み（createOrderSaver_）を使う
   let memberReorderList_ = null;
+  let groupReorderList_ = null;
   let reorderSavedTimer_ = null;
   let orderSaveStatus_ = ''; // '' | 'saving' | 'saved'
+  const orderSavers_ = [];
+
+  // opts.apply(names): 動かした順を画面へ反映する／opts.send(names, onSuccess, onFailure): サーバーへ送る
+  // opts.confirm(result, sent): サーバーが確認した順を記録する／opts.rollback(): 確認済みの順へ画面を戻す
+  function createOrderSaver_(opts) {
+    const saver = {
+      inFlight: false,
+      pending: null,
+      busy: function () { return saver.inFlight || !!saver.pending; },
+      set: function (names) {
+        opts.apply(names);
+        saver.pending = names.slice();
+        if (!saver.inFlight) saver.flush();
+      },
+      flush: function () {
+        const sending = saver.pending;
+        saver.pending = null;
+        if (!sending) { saver.inFlight = false; return; }
+        saver.inFlight = true;
+        setOrderSaveStatus_('saving');
+        let settled = false;
+        // 結果は1回だけ処理する（成功の途中で例外が出て失敗側に回ってきた場合などの二重処理を防ぐ）
+        function settle() {
+          if (settled) return false;
+          settled = true;
+          saver.inFlight = false;
+          return true;
+        }
+        function onSuccess(result) {
+          if (!settle()) return;
+          try {
+            opts.confirm(result, sending);
+          } finally {
+            if (saver.pending) saver.flush();
+            else if (anyOrderSaverInFlight_()) setOrderSaveStatus_('saving');
+            else showReorderSaved_();
+          }
+        }
+        function onFailure(err) {
+          if (!settle()) return;
+          if (saver.pending) {
+            // 失敗した間に、より新しい順が溜まっている：画面はそのままにして、新しい順を送り直す
+            showRunError(err);
+            saver.flush();
+            return;
+          }
+          setOrderSaveStatus_(anyOrderSaverInFlight_() ? 'saving' : '');
+          opts.rollback();
+          showRunError(err);
+        }
+        try {
+          opts.send(sending, onSuccess, onFailure);
+        } catch (err) {
+          onFailure(err);
+        }
+      }
+    };
+    orderSavers_.push(saver);
+    return saver;
+  }
+
+  function anyOrderSaverInFlight_() {
+    return orderSavers_.some(function (sv) { return sv.inFlight; });
+  }
 
   function applyOrderToViews_() {
     populateEmployeeList();
@@ -3081,6 +3196,50 @@
     populateEmployeeSelect();
     renderCurrentView();
   }
+
+  // グループの並びを、チップ行・ドロワーの選択欄・縮んだ帯へ反映する（選択中のグループは変えない）
+  function applyGroupOrderToViews_() {
+    populateGroupSelect();
+  }
+
+  const memberOrderSaver_ = createOrderSaver_({
+    apply: function (names) {
+      MY_ORDER.members = names.slice();
+      applyOrderToViews_();
+    },
+    send: function (names, onSuccess, onFailure) {
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).saveMyMemberOrder(names);
+    },
+    confirm: function (result, sent) {
+      MY_ORDER_CONFIRMED_ = (result && Array.isArray(result.members)) ? result.members.slice() : sent.slice();
+    },
+    rollback: function () {
+      MY_ORDER.members = MY_ORDER_CONFIRMED_.slice();
+      if (memberReorderList_) memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+      applyOrderToViews_();
+    }
+  });
+
+  const groupOrderSaver_ = createOrderSaver_({
+    apply: function (names) {
+      MY_ORDER.groups = names.slice();
+      applyGroupOrderToViews_();
+    },
+    send: function (names, onSuccess, onFailure) {
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).saveMyGroupOrder(names);
+    },
+    confirm: function (result, sent) {
+      MY_ORDER_CONFIRMED_GROUPS_ = (result && Array.isArray(result.groups)) ? result.groups.slice() : sent.slice();
+    },
+    rollback: function () {
+      MY_ORDER.groups = MY_ORDER_CONFIRMED_GROUPS_.slice();
+      if (groupReorderList_) groupReorderList_.setItems(orderedGroupNames_());
+      applyGroupOrderToViews_();
+    }
+  });
+
+  function setMemberOrder_(names) { memberOrderSaver_.set(names); }
+  function setGroupOrder_(names) { groupOrderSaver_.set(names); }
 
   // モーダルが開いている間は中の「保存しました」、閉じている間は画面下の表示に出す
   function renderOrderSaveStatus_() {
@@ -3104,67 +3263,43 @@
     setOrderSaveStatus_('saved');
   }
 
-  function setMemberOrder_(names) {
-    MY_ORDER.members = names.slice();
-    applyOrderToViews_();
-    memberOrderPending_ = names.slice();
-    if (!memberOrderInFlight_) flushMemberOrder_();
+  // グループ行の印：共有／作成（同じ名前が両方あるときは両方）。既定グループには「★既定」
+  function groupBadgesFor_(name) {
+    const types = getAllGroups().filter(function (g) { return g.name === name; }).map(function (g) { return g.type; });
+    const badges = [];
+    if (types.indexOf('shared') !== -1) badges.push({ text: '共有' });
+    if (types.indexOf('custom') !== -1) badges.push({ text: '作成' });
+    if (name === MY_GROUP_SETTINGS.defaultGroup) badges.push({ text: '★既定', cls: 'isDefault' });
+    return badges;
   }
 
-  function flushMemberOrder_() {
-    const sending = memberOrderPending_;
-    memberOrderPending_ = null;
-    if (!sending) { memberOrderInFlight_ = false; return; }
-    memberOrderInFlight_ = true;
-    setOrderSaveStatus_('saving');
-    let settled = false;
-    // 結果は1回だけ処理する（成功の途中で例外が出て失敗側に回ってきた場合などの二重処理を防ぐ）
-    function settle() {
-      if (settled) return false;
-      settled = true;
-      memberOrderInFlight_ = false;
-      return true;
-    }
-    function onSuccess(result) {
-      if (!settle()) return;
-      try {
-        MY_ORDER_CONFIRMED_ = (result && Array.isArray(result.members)) ? result.members.slice() : sending.slice();
-      } finally {
-        if (memberOrderPending_) flushMemberOrder_();
-        else showReorderSaved_();
-      }
-    }
-    function onFailure(err) {
-      if (!settle()) return;
-      if (memberOrderPending_) {
-        // 失敗した間に、より新しい順が溜まっている：画面はそのままにして、新しい順を送り直す
-        showRunError(err);
-        flushMemberOrder_();
-        return;
-      }
-      setOrderSaveStatus_('');
-      MY_ORDER.members = MY_ORDER_CONFIRMED_.slice();
-      if (memberReorderList_) memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
-      applyOrderToViews_();
-      showRunError(err);
-    }
-    try {
-      google.script.run
-        .withSuccessHandler(onSuccess)
-        .withFailureHandler(onFailure)
-        .saveMyMemberOrder(sending);
-    } catch (err) {
-      onFailure(err);
+  let reorderTab_ = 'members';
+
+  function setReorderTab_(tab) {
+    reorderTab_ = tab;
+    const isMembers = tab === 'members';
+    document.getElementById('reorderTabMembers').classList.toggle('active', isMembers);
+    document.getElementById('reorderTabMembers').setAttribute('aria-selected', String(isMembers));
+    document.getElementById('reorderTabGroups').classList.toggle('active', !isMembers);
+    document.getElementById('reorderTabGroups').setAttribute('aria-selected', String(!isMembers));
+    document.getElementById('reorderScroll').hidden = !isMembers;
+    document.getElementById('reorderScrollGroups').hidden = isMembers;
+    if (isMembers) {
+      memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+    } else {
+      groupReorderList_.setItems(orderedGroupNames_());
     }
   }
 
   function openReorderModal_() {
     closeDrawer_();
-    const host = document.getElementById('reorderScroll');
     if (!memberReorderList_) {
-      memberReorderList_ = createReorderList_(host, { onChange: setMemberOrder_ });
+      memberReorderList_ = createReorderList_(document.getElementById('reorderScroll'), { onChange: setMemberOrder_ });
     }
-    memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+    if (!groupReorderList_) {
+      groupReorderList_ = createReorderList_(document.getElementById('reorderScrollGroups'), { onChange: setGroupOrder_, badgesFor: groupBadgesFor_ });
+    }
+    setReorderTab_('members');
     document.getElementById('reorderOverlay').hidden = false;
     renderOrderSaveStatus_();
     document.getElementById('reorderDoneBtn').focus();
@@ -3173,14 +3308,83 @@
   // 閉じても保存は止めない。保存待ちが残っていて送信中でなければ、ここで直ちに送る
   function closeReorderModal_() {
     document.getElementById('reorderOverlay').hidden = true;
-    if (memberOrderPending_ && !memberOrderInFlight_) flushMemberOrder_();
+    orderSavers_.forEach(function (sv) { if (sv.pending && !sv.inFlight) sv.flush(); });
     renderOrderSaveStatus_();
   }
 
-  function resetMemberOrder_() {
-    setMemberOrder_([]);
-    memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+  // 「初期の並びに戻す」：確認を出してから、表示中のタブ（メンバー／グループ）の順を空にして保存する
+  function resetOrder_() {
+    showConfirm('並び順を初期の状態に戻しますか？', function () {
+      if (reorderTab_ === 'groups') {
+        setGroupOrder_([]);
+        groupReorderList_.setItems(orderedGroupNames_());
+      } else {
+        setMemberOrder_([]);
+        memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+      }
+    }, '戻す');
   }
+
+  // ==== アプリに戻ってきたとき、並び順（メンバー・グループ）を取り直す ====
+  // 他の端末で並び順を変えた後でも、ホーム画面アプリ等に戻ったときに反映するため。保存中・保存待ちが
+  // あるとき、いずれかのモーダルが開いているとき、前回の取得から60秒以内のときは取り直さない。
+  // 失敗しても何も表示せず、次の機会に再試行する。表示中の日付・スクロール位置は変えない
+  const ORDER_REFRESH_MIN_INTERVAL_MS = 60000;
+  let orderRefreshInFlight_ = false;
+
+  function canRefreshOrderNow_() {
+    if (!CURRENT_EMAIL) return false;
+    if (!document.getElementById('loginScreen').hidden || !document.getElementById('bootLoadingScreen').hidden) return false;
+    if (orderSavers_.some(function (sv) { return sv.busy(); })) return false;
+    return !document.querySelector('.modalOverlay:not([hidden])');
+  }
+
+  function refreshMyOrderIfIdle_() {
+    if (orderRefreshInFlight_ || !canRefreshOrderNow_()) return;
+    if (Date.now() - lastOrderRefreshAt_ < ORDER_REFRESH_MIN_INTERVAL_MS) return;
+    const prevAt = lastOrderRefreshAt_;
+    lastOrderRefreshAt_ = Date.now();
+    orderRefreshInFlight_ = true;
+    google.script.run
+      .withSuccessHandler(function (result) {
+        orderRefreshInFlight_ = false;
+        if (!canRefreshOrderNow_()) return; // 待っている間に保存・モーダルが始まった：古い順で上書きしない
+        applyFetchedOrder_(sbParseMyOrder_(JSON.stringify(result || {})));
+      })
+      .withFailureHandler(function () {
+        orderRefreshInFlight_ = false;
+        lastOrderRefreshAt_ = prevAt; // 何も表示せず、次の機会に再試行する
+      })
+      .getMyOrder();
+  }
+
+  function applyFetchedOrder_(incoming) {
+    const membersChanged = JSON.stringify(incoming.members) !== JSON.stringify(MY_ORDER.members);
+    const groupsChanged = JSON.stringify(incoming.groups) !== JSON.stringify(MY_ORDER.groups);
+    MY_ORDER_CONFIRMED_ = incoming.members.slice();
+    MY_ORDER_CONFIRMED_GROUPS_ = incoming.groups.slice();
+    if (!membersChanged && !groupsChanged) return;
+    const scrollers = ['ganttScroll', 'monthScroll', 'summaryView'].map(function (id) { return document.getElementById(id); }).filter(Boolean);
+    const tops = scrollers.map(function (el) { return el.scrollTop; });
+    const pageY = window.scrollY;
+    if (membersChanged) {
+      MY_ORDER.members = incoming.members.slice();
+      applyOrderToViews_();
+    }
+    if (groupsChanged) {
+      MY_ORDER.groups = incoming.groups.slice();
+      applyGroupOrderToViews_();
+    }
+    scrollers.forEach(function (el, i) { el.scrollTop = tops[i]; });
+    if (window.scrollY !== pageY) window.scrollTo(0, pageY);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) refreshMyOrderIfIdle_();
+  });
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) refreshMyOrderIfIdle_();
+  });
 
   // ==== ☰ドロワー ====
   function openDrawer_() {
