@@ -1479,6 +1479,11 @@
   let syncFailCount_ = 0;
   let syncTimer_ = null;
   let syncWritesInFlight_ = 0; // 通信中の予定・出退勤・マスタの保存の数
+  // 月データ（予定・出退勤）の「書き込みの世代」。保存の開始時と完了時にそれぞれ1ずつ進める。
+  // 月の取り直しは、開始時の世代を覚えておき、応答が届いたときに世代が変わっている／保存中なら捨てる
+  let monthWriteGen_ = 0;
+  let monthWritesInFlight_ = 0; // 通信中の予定・出退勤の保存の数
+  const staleMonthKeys_ = new Set(); // 応答を捨てたため、保存の完了後に1回だけ取り直す月
   let TODAY_STR = '';
   let CURRENT_EMAIL = '';
   let IS_MASTER_ADMIN = false;
@@ -1608,8 +1613,20 @@
         }
         // 保存の通信中は、他の端末の変更の確認をしない（syncWritesInFlight_）。完了（成功・失敗）で1回だけ減らす
         let counted = true;
+        const touchesMonth = SYNC_WRITE_FNS_[fnName] === 'schedule' || SYNC_WRITE_FNS_[fnName] === 'attendance';
         syncWritesInFlight_++;
-        const done = function () { if (counted) { counted = false; syncWritesInFlight_--; } };
+        if (touchesMonth) { monthWriteGen_++; monthWritesInFlight_++; }
+        const done = function () {
+          if (!counted) return;
+          counted = false;
+          syncWritesInFlight_--;
+          if (touchesMonth) {
+            monthWriteGen_++;
+            monthWritesInFlight_--;
+            // 完了の処理（楽観更新の確定・ロールバック）が済んでから、捨てた月を取り直す
+            if (monthWritesInFlight_ === 0 && staleMonthKeys_.size > 0) setTimeout(refetchStaleMonths_, 0);
+          }
+        };
         sbCall_(fnName, args,
           function (data) { done(); if (successHandler) successHandler(data); },
           function (err) { done(); if (failureHandler) failureHandler(err); });
@@ -2159,13 +2176,26 @@
   // noPrefetchがtrueのときは、前後の月の先読みをしない（先読みが先読みを呼んで月をたどり続けるのを防ぐ）
   function fetchMonth_(monthKey, silent, noPrefetch) {
     if (pendingMonthFetches.has(monthKey)) return pendingMonthFetches.get(monthKey);
+    const startGen = monthWriteGen_;
     const p = Promise.all([
       runServer_('getSchedulesForMonth', monthKey),
       runServer_('getAttendanceForMonth', monthKey)
     ]).then(function (results) {
+      pendingMonthFetches.delete(monthKey);
+      // 取り直しの途中で保存が始まった／終わった（保存中を含む）：この応答は保存前の内容かもしれないので
+      // キャッシュに入れず捨て、保存の完了後に1回だけ取り直す。キャッシュ（楽観更新済み）はそのまま残す
+      if (monthWritesInFlight_ > 0 || monthWriteGen_ !== startGen) {
+        const kept = monthCache.get(monthKey);
+        if (kept) {
+          markMonthStale_(monthKey);
+          return kept;
+        }
+        // キャッシュが無い（初回表示など）ので、保存の完了を待って取り直した結果を返す
+        return whenMonthWritesSettled_().then(function () { return fetchMonth_(monthKey, silent, noPrefetch); });
+      }
       const entry = { schedules: results[0] || [], attendance: results[1] || [], fetchedAt: Date.now() };
       monthCache.set(monthKey, entry);
-      pendingMonthFetches.delete(monthKey);
+      staleMonthKeys_.delete(monthKey);
       if (!noPrefetch) prefetchNeighborMonths_(monthKey);
       return entry;
     }, function (err) {
@@ -2175,6 +2205,34 @@
     });
     pendingMonthFetches.set(monthKey, p);
     return p;
+  }
+
+  // 保存中でなければ（＝応答を捨てた時点で保存が終わっていれば）すぐ、保存中なら完了後に取り直す
+  function markMonthStale_(monthKey) {
+    staleMonthKeys_.add(monthKey);
+    if (monthWritesInFlight_ === 0) setTimeout(refetchStaleMonths_, 0);
+  }
+
+  function whenMonthWritesSettled_() {
+    return new Promise(function (resolve) {
+      (function check() {
+        if (monthWritesInFlight_ === 0) resolve(); else setTimeout(check, 50);
+      })();
+    });
+  }
+
+  // 応答を捨てた月を1回だけ取り直し、表示中の月なら描画し直す（先読みはしない）
+  function refetchStaleMonths_() {
+    if (monthWritesInFlight_ > 0) return; // まだ保存中：完了時にもう一度呼ばれる
+    const keys = Array.from(staleMonthKeys_);
+    staleMonthKeys_.clear();
+    keys.forEach(function (mk) {
+      fetchMonth_(mk, true, true).then(function () {
+        const currentKey = state.viewMode === 'day' ? state.date.slice(0, 7) : state.month;
+        if (currentKey !== mk) return;
+        if (state.viewMode === 'day') loadSchedules(); else loadMonthSchedules();
+      }, function () { /* 失敗は表示しない。次に開いたときの取り直しに任せる */ });
+    });
   }
 
   // 表示中の月の前後1か月を、画面には反映せずバックグラウンドで先読みしておく
