@@ -1463,6 +1463,22 @@
   let MY_ORDER_CONFIRMED_ = [];
   let MY_ORDER_CONFIRMED_GROUPS_ = [];
   let lastOrderRefreshAt_ = 0; // 並び順を最後に取得した（起動時の取得を含む）時刻
+  // 他の端末の変更の反映（データの版番号）の状態。処理は「他の端末の変更を反映する」の節にある
+  const SYNC_KINDS_ = ['schedule', 'attendance', 'master'];
+  const SYNC_WRITE_FNS_ = {
+    upsertSchedule: 'schedule', deleteSchedule: 'schedule', restoreSchedule: 'schedule',
+    saveAttendance: 'attendance', updateEmployeeNote: 'master', saveMasterListData: 'master'
+  };
+  let syncSeen_ = null; // 画面が「見た」種別ごとの番号。nullは未取得（起動直後）
+  const syncOwnBumps_ = { schedule: new Set(), attendance: new Set(), master: new Set() }; // 自分の保存で上がった番号
+  const syncDirty_ = { schedule: false, attendance: false, master: false }; // 変わったが、まだ取り直せていない種別
+  let syncSupported_ = true; // falseならサーバーが未対応：定期確認を止めて従来の動作に戻る
+  let syncPollSec_ = 30; // サーバーが返す間隔（秒）。0なら定期確認なし
+  let syncLastCheckAt_ = 0;
+  let syncInFlight_ = false;
+  let syncFailCount_ = 0;
+  let syncTimer_ = null;
+  let syncWritesInFlight_ = 0; // 通信中の予定・出退勤・マスタの保存の数
   let TODAY_STR = '';
   let CURRENT_EMAIL = '';
   let IS_MASTER_ADMIN = false;
@@ -1536,7 +1552,7 @@
     'getMyGroupSettings', 'saveMyCustomGroups', 'setMyDefaultGroup', 'getThemeModePref',
     'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
-    'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder'
+    'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion'
   ];
 
   // 無応答のタイムアウトを入れる関数（ms）。並び順の保存だけに適用し、他の呼び出しの挙動は変えない。
@@ -1554,6 +1570,7 @@
     sbFetch_({ action: 'call', token: sbGetSessionToken_(), fn: fnName, args: args }, sbCallTimeoutMs_(fnName))
       .then(function (res) {
         if (res && res.ok) {
+          syncNoteOwnBumps_(res.dataVersions);
           if (onSuccess) onSuccess(res.data);
           return;
         }
@@ -1584,7 +1601,18 @@
     };
     SB_ALLOWED_RUN_FUNCTIONS_.forEach(function (fnName) {
       proxy[fnName] = function () {
-        sbCall_(fnName, Array.prototype.slice.call(arguments), successHandler, failureHandler);
+        const args = Array.prototype.slice.call(arguments);
+        if (!Object.prototype.hasOwnProperty.call(SYNC_WRITE_FNS_, fnName)) {
+          sbCall_(fnName, args, successHandler, failureHandler);
+          return;
+        }
+        // 保存の通信中は、他の端末の変更の確認をしない（syncWritesInFlight_）。完了（成功・失敗）で1回だけ減らす
+        let counted = true;
+        syncWritesInFlight_++;
+        const done = function () { if (counted) { counted = false; syncWritesInFlight_--; } };
+        sbCall_(fnName, args,
+          function (data) { done(); if (successHandler) successHandler(data); },
+          function (err) { done(); if (failureHandler) failureHandler(err); });
       };
     });
     return proxy;
@@ -1727,6 +1755,7 @@
     sbCall_('getInitData', [], function (data) {
       if (!sbIsLoginGenCurrent_(gen)) return;
       sbApplyInitData_(data);
+      syncBaseline_();
       refreshCalendarLinkStatus_(true);
       sbSetBootPhaseText_('予定を読み込んでいます…');
       init(function () {
@@ -2126,7 +2155,9 @@
 
   // 指定月の予定・勤怠をサーバーから取得し、キャッシュへ書き込む。同じ月への呼び出しが
   // 重なった場合は同じPromiseを返して二重通信を避ける
-  function fetchMonth_(monthKey) {
+  // silentがtrueのときは、失敗してもエラーを画面に出さない（他の端末の変更の確認など、裏の取得用）。
+  // noPrefetchがtrueのときは、前後の月の先読みをしない（先読みが先読みを呼んで月をたどり続けるのを防ぐ）
+  function fetchMonth_(monthKey, silent, noPrefetch) {
     if (pendingMonthFetches.has(monthKey)) return pendingMonthFetches.get(monthKey);
     const p = Promise.all([
       runServer_('getSchedulesForMonth', monthKey),
@@ -2135,11 +2166,11 @@
       const entry = { schedules: results[0] || [], attendance: results[1] || [], fetchedAt: Date.now() };
       monthCache.set(monthKey, entry);
       pendingMonthFetches.delete(monthKey);
-      prefetchNeighborMonths_(monthKey);
+      if (!noPrefetch) prefetchNeighborMonths_(monthKey);
       return entry;
     }, function (err) {
       pendingMonthFetches.delete(monthKey);
-      showRunError(err);
+      if (!silent) showRunError(err);
       throw err;
     });
     pendingMonthFetches.set(monthKey, p);
@@ -2149,7 +2180,7 @@
   // 表示中の月の前後1か月を、画面には反映せずバックグラウンドで先読みしておく
   function prefetchNeighborMonths_(monthKey) {
     [shiftMonthKey_(monthKey, -1), shiftMonthKey_(monthKey, 1)].forEach(function (mk) {
-      if (!monthCache.has(mk) && !pendingMonthFetches.has(mk)) fetchMonth_(mk);
+      if (!monthCache.has(mk) && !pendingMonthFetches.has(mk)) fetchMonth_(mk, true, true).catch(function () { /* 先読みの失敗は表示しない */ });
     });
   }
 
@@ -3379,12 +3410,196 @@
     if (window.scrollY !== pageY) window.scrollTo(0, pageY);
   }
 
+  // ==== 他の端末の変更を反映する（データの版番号） ====
+  // サーバーの getDataVersion が返す種別ごとの番号（schedule／attendance／master）を、
+  //   A：アプリに戻ってきたとき（前回の確認から30秒以上あいていたときのみ。並び順の取り直しは上の60秒のまま）
+  //   B：画面が表示中のあいだ、サーバーが返す pollIntervalSec ごと（0なら止める。非表示のときも止める）
+  // に確認し、前回と違った種別だけ取り直して再描画する。確認だけを行うのは、画面が表示中／モーダルが
+  // 開いていない／保存の通信中でない（予定・出退勤・並び順）／ドラッグ中でない／入力欄を操作中でない、のとき。
+  // 失敗しても何も表示せず、次の回に再試行する（続くときは間隔をのばす）。サーバーが未対応（エラー）なら止める。
+  // 自分の保存で上がった番号は、保存の応答（dataVersions）で「見た」ことにして、無駄な再取得をしない。
+  const SYNC_RETURN_MIN_INTERVAL_MS = 30000;
+  const SYNC_BACKOFF_MAX_MS = 300000;
+
+  function syncReturnMinMs_() {
+    return typeof window.__SB_TEST_SYNC_MIN_INTERVAL_MS__ === 'number' ? window.__SB_TEST_SYNC_MIN_INTERVAL_MS__ : SYNC_RETURN_MIN_INTERVAL_MS;
+  }
+
+  function syncFieldFocused_() {
+    const el = document.activeElement;
+    if (!el || el === document.body) return false;
+    return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true;
+  }
+
+  function canSyncNow_() {
+    if (!syncSupported_ || document.hidden) return false;
+    if (!canRefreshOrderNow_()) return false; // ログイン済み・モーダルなし・並び順の保存中でない
+    if (syncWritesInFlight_ > 0 || state.saving) return false;
+    if (document.querySelector('.reorderRow.dragging')) return false;
+    return !syncFieldFocused_();
+  }
+
+  // 自分の保存の応答に載っている「自分が上げた番号」を覚える（画面が見た番号と照らし合わせる）
+  function syncNoteOwnBumps_(bumps) {
+    if (!bumps || !syncSeen_) return;
+    SYNC_KINDS_.forEach(function (kind) {
+      if (typeof bumps[kind] === 'number') syncOwnBumps_[kind].add(bumps[kind]);
+    });
+  }
+
+  // 番号 from+1 ～ to がすべて自分の保存で上がったものなら true
+  function syncExplainedByOwn_(kind, from, to) {
+    if (to <= from) return false;
+    for (let n = from + 1; n <= to; n++) {
+      if (!syncOwnBumps_[kind].has(n)) return false;
+    }
+    return true;
+  }
+
+  function syncAdopt_(versions, compare) {
+    SYNC_KINDS_.forEach(function (kind) {
+      const n = Number(versions && versions[kind]);
+      if (isNaN(n)) return;
+      const s = syncSeen_ ? syncSeen_[kind] : null;
+      if (compare && s !== null && n !== s && !syncExplainedByOwn_(kind, s, n)) syncDirty_[kind] = true;
+      if (syncSeen_ === null) syncSeen_ = {};
+      syncSeen_[kind] = n;
+      syncOwnBumps_[kind].forEach(function (v) { if (v <= n) syncOwnBumps_[kind].delete(v); });
+    });
+  }
+
+  function syncApplyServerInfo_(data) {
+    const sec = Number(data && data.pollIntervalSec);
+    syncPollSec_ = isNaN(sec) || sec < 0 ? 0 : sec;
+  }
+
+  // ログイン直後：初期データ取得の直後に、その時点の番号を基準として覚える（比べない）
+  function syncBaseline_() {
+    syncSeen_ = null;
+    SYNC_KINDS_.forEach(function (kind) { syncDirty_[kind] = false; syncOwnBumps_[kind].clear(); });
+    syncSupported_ = true;
+    syncFailCount_ = 0;
+    syncLastCheckAt_ = Date.now();
+    google.script.run
+      .withSuccessHandler(function (data) {
+        syncApplyServerInfo_(data);
+        syncAdopt_(data && data.versions, false);
+        scheduleSyncPoll_();
+      })
+      .withFailureHandler(syncOnFailure_)
+      .getDataVersion();
+  }
+
+  function syncOnFailure_(err) {
+    syncInFlight_ = false;
+    if (err && err.errorCode === 'BAD_REQUEST') {
+      // サーバーが getDataVersion に未対応：定期確認を止めて、今までの動作に戻る
+      syncSupported_ = false;
+      if (syncTimer_) { clearTimeout(syncTimer_); syncTimer_ = null; }
+      return;
+    }
+    syncFailCount_++;
+    scheduleSyncPoll_();
+  }
+
+  function checkDataVersion_(fromReturn) {
+    if (syncInFlight_ || !canSyncNow_()) return;
+    if (fromReturn && Date.now() - syncLastCheckAt_ < syncReturnMinMs_()) return;
+    syncLastCheckAt_ = Date.now();
+    syncInFlight_ = true;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        syncInFlight_ = false;
+        syncFailCount_ = 0;
+        syncApplyServerInfo_(data);
+        // 待っている間に保存が始まった：結果は使わず、次の回に確認し直す（自分の保存の応答との前後を避ける）
+        if (syncWritesInFlight_ === 0) {
+          if (syncSeen_ === null) syncAdopt_(data && data.versions, false);
+          else syncAdopt_(data && data.versions, true);
+        }
+        scheduleSyncPoll_();
+        applySyncRefresh_();
+      })
+      .withFailureHandler(syncOnFailure_)
+      .getDataVersion();
+  }
+
+  // 変わった種別（syncDirty_）だけ取り直して再描画する。条件が揃わなければ、そのまま次の確認で再試行する
+  function applySyncRefresh_() {
+    if (!syncDirty_.schedule && !syncDirty_.attendance && !syncDirty_.master) return;
+    if (!canSyncNow_()) return;
+    if (syncDirty_.master) {
+      syncDirty_.master = false;
+      runServer_('getInitData').then(function (data) {
+        let incoming;
+        try { incoming = JSON.parse(data.employeesJson); } catch (e) { syncDirty_.master = true; return; }
+        if (JSON.stringify(incoming) === JSON.stringify(EMPLOYEES)) return;
+        EMPLOYEES = incoming;
+        if (canSyncNow_()) renderCurrentView();
+      }, function () { syncDirty_.master = true; });
+    }
+    if (syncDirty_.schedule || syncDirty_.attendance) {
+      syncDirty_.schedule = false;
+      syncDirty_.attendance = false;
+      const monthKey = state.viewMode === 'day' ? state.date.slice(0, 7) : state.month;
+      // 表示中の月は取り直し、ほかの月は「古い」扱いにする（開いたときは即表示しつつ、裏で取り直される）
+      monthCache.forEach(function (entry, k) { if (k !== monthKey) entry.fetchedAt = 0; });
+      monthCache.delete(monthKey);
+      fetchMonth_(monthKey, true, true).then(function () {
+        const currentKey = state.viewMode === 'day' ? state.date.slice(0, 7) : state.month;
+        if (currentKey !== monthKey) return; // 待っている間に別の月へ移動した
+        if (!canSyncNow_()) { syncDirty_.schedule = true; return; } // モーダルが開いた等：閉じた後に1回だけ取り直す
+        const scrollers = ['ganttScroll', 'monthScroll', 'summaryView'].map(function (id) { return document.getElementById(id); }).filter(Boolean);
+        const tops = scrollers.map(function (el) { return el.scrollTop; });
+        const pageY = window.scrollY;
+        if (state.viewMode === 'day') loadSchedules(); else loadMonthSchedules();
+        scrollers.forEach(function (el, i) { el.scrollTop = tops[i]; });
+        if (window.scrollY !== pageY) window.scrollTo(0, pageY);
+      }, function () { syncDirty_.schedule = true; });
+    }
+  }
+
+  // 表示中のあいだ、サーバーが返す間隔ごとに確認する。失敗が続くほど間隔をのばす（上限5分）
+  function scheduleSyncPoll_() {
+    if (syncTimer_) { clearTimeout(syncTimer_); syncTimer_ = null; }
+    if (!syncSupported_ || syncPollSec_ <= 0 || document.hidden || !CURRENT_EMAIL) return;
+    const delay = Math.min(syncPollSec_ * 1000 * Math.pow(2, Math.min(syncFailCount_, 5)), Math.max(SYNC_BACKOFF_MAX_MS, syncPollSec_ * 1000));
+    syncTimer_ = setTimeout(function () {
+      syncTimer_ = null;
+      checkDataVersion_(false);
+      if (!syncInFlight_) scheduleSyncPoll_(); // 条件が揃わず送らなかったときも、次の回を予約する
+    }, delay);
+  }
+
+  // 戻ってきたとき：並び順の取り直し（60秒）と、予定・出退勤の確認（30秒）を1か所で扱う
+  function onAppReturn_() {
+    refreshMyOrderIfIdle_();
+    checkDataVersion_(true);
+    scheduleSyncPoll_();
+  }
+
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) refreshMyOrderIfIdle_();
+    if (document.hidden) {
+      if (syncTimer_) { clearTimeout(syncTimer_); syncTimer_ = null; }
+      return;
+    }
+    onAppReturn_();
   });
   window.addEventListener('pageshow', function (e) {
-    if (e.persisted) refreshMyOrderIfIdle_();
+    if (e.persisted) onAppReturn_();
   });
+  window.addEventListener('focus', function () {
+    if (!document.hidden) onAppReturn_();
+  });
+
+  // モーダル（編集ウィンドウ等）を閉じたとき：開いている間に番号が変わっていれば、1回だけ取り直す
+  (function watchModalClose_() {
+    document.querySelectorAll('.modalOverlay').forEach(function (el) {
+      new MutationObserver(function () {
+        if (el.hidden) setTimeout(function () { checkDataVersion_(false); applySyncRefresh_(); }, 300);
+      }).observe(el, { attributes: true, attributeFilter: ['hidden'] });
+    });
+  })();
 
   // ==== ☰ドロワー ====
   function openDrawer_() {
