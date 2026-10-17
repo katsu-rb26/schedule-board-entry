@@ -794,6 +794,13 @@
       display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 32px);
     }
     .toast[hidden] { display: none; }
+    /* 並び順の保存の結果。モーダルを閉じた後でも見えるよう、モーダルの外の画面下に出す（トーストより下の段） */
+    .orderSaveStatus {
+      position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%);
+      background: var(--overlay-bg); color: var(--overlay-text); padding: 8px 14px; border-radius: 8px;
+      font-size: 12.5px; z-index: 200; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    }
+    .orderSaveStatus[hidden] { display: none; }
     .toast button {
       background: transparent; border: 1px solid rgba(255,255,255,0.45); color: var(--overlay-text);
       padding: 3px 10px; border-radius: 5px; font-size: 11.5px; white-space: nowrap;
@@ -1427,6 +1434,7 @@
   <!-- トースト通知（エラー表示・削除後の「元に戻す」導線用。alert()もサンドボックス内で
        ブロックされることがあるため、これで代替する） -->
   <div class="toast" id="toast" hidden></div>
+  <div class="orderSaveStatus" id="orderSaveStatus" role="status" aria-live="polite" hidden></div>
 
   <!-- 独自ツールチップ（ブラウザ標準title属性は表示までに遅延があるため、ホバーで即時表示する） -->
   <div class="customTooltip" id="customTooltip" hidden></div>
@@ -1468,12 +1476,25 @@
   }
 
   // ==== v2追加：SB-Serverとの通信（text/plain POST）・google.script.run互換shim ====
-  function sbFetch_(bodyObj) {
-    return fetch(window.SB_CONFIG.API_URL, {
+  // timeoutMs（任意）を渡すと、その時間たっても応答が終わらないときに通信を打ち切って失敗にする。
+  // 打ち切った後に届く応答は処理されない（fetchごと中止するため）。未指定なら従来どおり待ち続ける
+  function sbFetch_(bodyObj, timeoutMs) {
+    const ctrl = (timeoutMs > 0 && typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timedOut = false;
+    const timer = ctrl ? setTimeout(function () { timedOut = true; ctrl.abort(); }, timeoutMs) : null;
+    const opts = {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(bodyObj)
-    }).then(function (res) { return res.json(); });
+    };
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(window.SB_CONFIG.API_URL, opts)
+      .then(function (res) { return res.json(); })
+      .catch(function (err) {
+        if (timedOut) throw new Error('応答がありませんでした。もう一度お試しください');
+        throw err;
+      })
+      .finally(function () { if (timer) clearTimeout(timer); });
   }
 
   // サーバーはerrorCodeのみを返す（message文言は意図的に返さない）ため、
@@ -1508,10 +1529,19 @@
     'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder'
   ];
 
+  // 無応答のタイムアウトを入れる関数（ms）。並び順の保存だけに適用し、他の呼び出しの挙動は変えない。
+  // テストだけ window.__SB_TEST_ORDER_TIMEOUT_MS__ で短縮できる
+  const SB_CALL_TIMEOUT_MS_ = { saveMyMemberOrder: 30000 };
+  function sbCallTimeoutMs_(fnName) {
+    const ms = SB_CALL_TIMEOUT_MS_[fnName];
+    if (!ms) return 0;
+    return typeof window.__SB_TEST_ORDER_TIMEOUT_MS__ === 'number' ? window.__SB_TEST_ORDER_TIMEOUT_MS__ : ms;
+  }
+
   // action="call"でfnを1回呼ぶ。BUSYは1秒待って1回だけ再試行する。
   // TOKEN_INVALID/TOKEN_EXPIRED/NOT_ALLOWEDは入場証を削除してログイン画面に戻す。
   function sbCall_(fnName, args, onSuccess, onFailure, retried) {
-    sbFetch_({ action: 'call', token: sbGetSessionToken_(), fn: fnName, args: args })
+    sbFetch_({ action: 'call', token: sbGetSessionToken_(), fn: fnName, args: args }, sbCallTimeoutMs_(fnName))
       .then(function (res) {
         if (res && res.ok) {
           if (onSuccess) onSuccess(res.data);
@@ -1655,8 +1685,14 @@
     MY_TASKS_INITIAL = JSON.parse(data.myTasksJson);
     MY_GROUP_SETTINGS = JSON.parse(data.myGroupSettingsJson);
     // 古いサーバーにはmyOrderJsonが無い。無い・壊れている場合は空（社員マスタ順）として扱う
-    MY_ORDER = sbParseMyOrder_(data.myOrderJson);
-    MY_ORDER_CONFIRMED_ = MY_ORDER.members.slice();
+    // 並び順の保存中・保存待ちがあるときは、画面のメンバー順（より新しい）を古い順で上書きしない
+    const incomingOrder = sbParseMyOrder_(data.myOrderJson);
+    if (memberOrderInFlight_ || memberOrderPending_) {
+      MY_ORDER.groups = incomingOrder.groups;
+    } else {
+      MY_ORDER = incomingOrder;
+      MY_ORDER_CONFIRMED_ = MY_ORDER.members.slice();
+    }
     // サーバーの今日の日付を使う。形が不正・欠落していたらブラウザの今日の日付を使う
     TODAY_STR = /^\d{4}-\d{2}-\d{2}$/.test(data.todayStr || '') ? data.todayStr : sbBrowserTodayStr_();
     CURRENT_EMAIL = data.userEmail;
@@ -3024,11 +3060,15 @@
 
   // メンバー順の保存：動かすたびに自動保存する。保存は直列（同時に1つだけ送り、送信中に
   // 来た変更は最新の1つにまとめて、前の保存が終わってから送る）なので、最後の順が必ず残る。
-  // 失敗したら、サーバーが最後に確認した順へ画面を戻してshowRunErrorで知らせる
+  // モーダルを閉じても保存は止まらず、結果（保存中／保存しました）は閉じた後も画面下に出る。
+  // 送信中フラグは、成功・失敗・例外・タイムアウト（sbFetch_）のどれでも必ず戻る。
+  // 失敗したら、保存待ちが無ければサーバーが最後に確認した順へ画面を戻してshowRunErrorで知らせる。
+  // 保存待ちがあるときは、その（より新しい）順を送り直し、それも失敗したら戻す
   let memberOrderInFlight_ = false;
   let memberOrderPending_ = null;
   let memberReorderList_ = null;
   let reorderSavedTimer_ = null;
+  let orderSaveStatus_ = ''; // '' | 'saving' | 'saved'
 
   function applyOrderToViews_() {
     populateEmployeeList();
@@ -3042,11 +3082,26 @@
     renderCurrentView();
   }
 
-  function showReorderSaved_() {
-    const el = document.getElementById('reorderSavedMsg');
-    el.hidden = false;
+  // モーダルが開いている間は中の「保存しました」、閉じている間は画面下の表示に出す
+  function renderOrderSaveStatus_() {
+    const modalOpen = !document.getElementById('reorderOverlay').hidden;
+    document.getElementById('reorderSavedMsg').hidden = !(modalOpen && orderSaveStatus_ === 'saved');
+    const ext = document.getElementById('orderSaveStatus');
+    ext.hidden = modalOpen || !orderSaveStatus_;
+    ext.textContent = orderSaveStatus_ === 'saving' ? '保存中…' : (orderSaveStatus_ === 'saved' ? '保存しました' : '');
+  }
+
+  function setOrderSaveStatus_(status) {
+    orderSaveStatus_ = status;
     clearTimeout(reorderSavedTimer_);
-    reorderSavedTimer_ = setTimeout(function () { el.hidden = true; }, 1800);
+    if (status === 'saved') {
+      reorderSavedTimer_ = setTimeout(function () { orderSaveStatus_ = ''; renderOrderSaveStatus_(); }, 1800);
+    }
+    renderOrderSaveStatus_();
+  }
+
+  function showReorderSaved_() {
+    setOrderSaveStatus_('saved');
   }
 
   function setMemberOrder_(names) {
@@ -3061,23 +3116,46 @@
     memberOrderPending_ = null;
     if (!sending) { memberOrderInFlight_ = false; return; }
     memberOrderInFlight_ = true;
-    document.getElementById('reorderSavedMsg').hidden = true;
-    google.script.run
-      .withSuccessHandler(function (result) {
+    setOrderSaveStatus_('saving');
+    let settled = false;
+    // 結果は1回だけ処理する（成功の途中で例外が出て失敗側に回ってきた場合などの二重処理を防ぐ）
+    function settle() {
+      if (settled) return false;
+      settled = true;
+      memberOrderInFlight_ = false;
+      return true;
+    }
+    function onSuccess(result) {
+      if (!settle()) return;
+      try {
         MY_ORDER_CONFIRMED_ = (result && Array.isArray(result.members)) ? result.members.slice() : sending.slice();
-        if (memberOrderPending_) { flushMemberOrder_(); return; }
-        memberOrderInFlight_ = false;
-        showReorderSaved_();
-      })
-      .withFailureHandler(function (err) {
-        memberOrderInFlight_ = false;
-        memberOrderPending_ = null;
-        MY_ORDER.members = MY_ORDER_CONFIRMED_.slice();
-        if (memberReorderList_) memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
-        applyOrderToViews_();
+      } finally {
+        if (memberOrderPending_) flushMemberOrder_();
+        else showReorderSaved_();
+      }
+    }
+    function onFailure(err) {
+      if (!settle()) return;
+      if (memberOrderPending_) {
+        // 失敗した間に、より新しい順が溜まっている：画面はそのままにして、新しい順を送り直す
         showRunError(err);
-      })
-      .saveMyMemberOrder(sending);
+        flushMemberOrder_();
+        return;
+      }
+      setOrderSaveStatus_('');
+      MY_ORDER.members = MY_ORDER_CONFIRMED_.slice();
+      if (memberReorderList_) memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
+      applyOrderToViews_();
+      showRunError(err);
+    }
+    try {
+      google.script.run
+        .withSuccessHandler(onSuccess)
+        .withFailureHandler(onFailure)
+        .saveMyMemberOrder(sending);
+    } catch (err) {
+      onFailure(err);
+    }
   }
 
   function openReorderModal_() {
@@ -3087,13 +3165,16 @@
       memberReorderList_ = createReorderList_(host, { onChange: setMemberOrder_ });
     }
     memberReorderList_.setItems(orderedEmployees_().map(function (e) { return e.name; }));
-    document.getElementById('reorderSavedMsg').hidden = true;
     document.getElementById('reorderOverlay').hidden = false;
+    renderOrderSaveStatus_();
     document.getElementById('reorderDoneBtn').focus();
   }
 
+  // 閉じても保存は止めない。保存待ちが残っていて送信中でなければ、ここで直ちに送る
   function closeReorderModal_() {
     document.getElementById('reorderOverlay').hidden = true;
+    if (memberOrderPending_ && !memberOrderInFlight_) flushMemberOrder_();
+    renderOrderSaveStatus_();
   }
 
   function resetMemberOrder_() {
