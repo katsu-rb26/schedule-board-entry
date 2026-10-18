@@ -882,6 +882,53 @@
     .modalActions .right { display: flex; gap: 8px; }
     .errorText { color: var(--danger); font-size: 12px; margin-top: 6px; }
 
+    /* お知らせ：利用者のポップアップ（z-index 200。保存の表示#saveIndicator(300)より後ろ） */
+    .noticeOverlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex;
+      align-items: center; justify-content: center; z-index: 200; padding: 16px;
+    }
+    .noticeOverlay[hidden] { display: none; }
+    .noticeBox {
+      background: var(--surface); color: var(--text-primary); border-radius: 12px; padding: 20px;
+      width: 420px; max-width: 100%; max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    }
+    .noticeTitle { font-size: 16px; font-weight: 700; color: var(--accent-text); overflow-wrap: anywhere; }
+    .noticeMeta { font-size: 11.5px; color: var(--text-muted); margin: 4px 0 12px; }
+    .noticeBody {
+      font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere;
+      overflow-y: auto; min-height: 0; flex: 1 1 auto;
+    }
+    .noticeFooter { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+    .noticeCounter { font-size: 12.5px; color: var(--text-secondary); }
+    .noticeFooter button { min-height: 44px; padding: 0 20px; font-size: 14px; margin-left: auto; }
+    /* お知らせ：管理画面（マスタ管理の中） */
+    .noticeAdminBar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+    .noticeAdminRow {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    .noticeAdminMain { min-width: 0; flex: 1 1 auto; }
+    .noticeAdminHead { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+    .noticeAdminHead .noticeAdminName { overflow-wrap: anywhere; }
+    .noticeAdminSub { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; }
+    .noticeAdminBtns { display: flex; gap: 6px; flex: none; }
+    .noticeTag { flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+    .noticeTag.scheduled { background: rgba(230,180,40,0.28); color: var(--text-primary); }
+    .noticeTag.active { background: rgba(46,125,79,0.2); color: var(--ok); }
+    .noticeTag.ended { background: rgba(128,128,128,0.22); color: var(--text-muted); }
+    .noticeEmpty { color: var(--text-muted); font-size: 12.5px; padding: 12px 2px; }
+    .noticeWarnBox {
+      background: rgba(230,180,40,0.2); border: 1px solid rgba(200,150,20,0.65); border-radius: 6px;
+      padding: 8px 10px; font-size: 12px; margin-bottom: 12px; color: var(--text-primary);
+    }
+    .noticeWarnBox[hidden] { display: none; }
+    .noticeCount { font-size: 11px; color: var(--text-muted); text-align: right; margin-top: 2px; }
+    .noticeCount.over { color: var(--danger); font-weight: 600; }
+    #noticeEditTitle, #noticeEditBody, #noticeEditStart, #noticeEditEnd { width: 100%; box-sizing: border-box; }
+    #noticeEditBody { min-height: 110px; resize: vertical; font-family: inherit; }
+    .toast.isError { background: var(--danger); color: var(--on-accent); }
+
     #masterTableWrap { overflow-x: auto; }
     .masterTable { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }
     .masterTable th, .masterTable td { border: 1px solid var(--border); padding: 5px 6px; text-align: left; white-space: nowrap; }
@@ -1343,6 +1390,10 @@
       <h3>マスタ管理</h3>
       <div class="masterTabs" id="masterTabs"></div>
       <div id="masterTableWrap"></div>
+      <div id="noticePanel" hidden>
+        <div class="noticeAdminBar"><button class="primary" id="noticeNewBtn">＋ 新しいお知らせ</button></div>
+        <div id="noticeAdminList"></div>
+      </div>
       <div class="modalActions">
         <div></div>
         <div class="right">
@@ -1455,6 +1506,54 @@
 
   <!-- トースト通知（エラー表示・削除後の「元に戻す」導線用。alert()もサンドボックス内で
        ブロックされることがあるため、これで代替する） -->
+  <!-- お知らせ：編集ウィンドウ（管理者） -->
+  <div class="modalOverlay" id="noticeEditOverlay" hidden>
+    <div class="modalBox" style="width:460px;">
+      <button type="button" class="modalCloseX" id="noticeEditCloseX" aria-label="閉じる">×</button>
+      <h3 id="noticeEditHeading">新しいお知らせ</h3>
+      <div class="formRow">
+        <label for="noticeEditTitle">タイトル（40文字まで）</label>
+        <input type="text" id="noticeEditTitle" autocomplete="off">
+        <div class="noticeCount" id="noticeEditTitleCount"></div>
+      </div>
+      <div class="formRow">
+        <label for="noticeEditBody">本文（1000文字まで・改行できます）</label>
+        <textarea id="noticeEditBody"></textarea>
+        <div class="noticeCount" id="noticeEditBodyCount"></div>
+      </div>
+      <div class="formRow">
+        <label for="noticeEditStart">表示を始める日時</label>
+        <input type="datetime-local" id="noticeEditStart">
+      </div>
+      <div class="formRow">
+        <label for="noticeEditEnd">表示を終える日時（空なら、ずっと表示）</label>
+        <input type="datetime-local" id="noticeEditEnd">
+      </div>
+      <div class="noticeWarnBox" id="noticeEditWarn" hidden>開始が未来なので、予約中になります。管理者以外には見えません。</div>
+      <div class="errorText" id="noticeEditError"></div>
+      <div class="modalActions">
+        <div></div>
+        <div class="right">
+          <button id="noticeEditCancelBtn">キャンセル</button>
+          <button class="primary" id="noticeEditSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- お知らせ：利用者のポップアップ（確認するまで閉じない） -->
+  <div class="noticeOverlay" id="noticeOverlay" role="dialog" aria-modal="true" aria-labelledby="noticePopupTitle" hidden>
+    <div class="noticeBox">
+      <div class="noticeTitle" id="noticePopupTitle"></div>
+      <div class="noticeMeta" id="noticePopupMeta"></div>
+      <div class="noticeBody" id="noticePopupBody"></div>
+      <div class="noticeFooter">
+        <span class="noticeCounter" id="noticePopupCounter" hidden></span>
+        <button class="primary" id="noticeConfirmBtn">確認しました</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden></div>
   <div class="saveIndicator" id="saveIndicator" role="status" aria-live="polite" hidden></div>
 
@@ -1571,7 +1670,8 @@
     'getMyGroupSettings', 'saveMyCustomGroups', 'setMyDefaultGroup', 'getThemeModePref',
     'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
-    'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion'
+    'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion',
+    'listNotices', 'saveNotice', 'deleteNotice', 'confirmNotice'
   ];
 
   // ==== 保存の表示（画面中央のカード） ====
@@ -1581,7 +1681,8 @@
   const SAVE_UI_DONE_MS = 1200; // 「保存しました」を出している時間
   const SAVE_UI_ERROR_MS = 5000; // 「保存できませんでした」を出している時間
   const SAVE_UI_FNS_ = Object.keys(SYNC_WRITE_FNS_).concat([
-    'saveMyMemberOrder', 'saveMyGroupOrder', 'saveMyCustomGroups', 'setMyDefaultGroup', 'saveThemeModePref'
+    'saveMyMemberOrder', 'saveMyGroupOrder', 'saveMyCustomGroups', 'setMyDefaultGroup', 'saveThemeModePref',
+    'saveNotice', 'deleteNotice' // お知らせの保存・削除（確認はポップアップ側で独自に扱うため含めない）
   ]);
   const saveUi_ = { delayTimer: null, hideTimer: null, failure: null };
 
@@ -1876,6 +1977,7 @@
         if (!sbEndLoginAttempt_(gen)) return;
         document.getElementById('bootLoadingScreen').hidden = true;
         document.getElementById('loginScreen').hidden = true;
+        noticeFetchList_();
       });
     }, function () {
       if (!sbIsLoginGenCurrent_(gen)) return;
@@ -3696,6 +3798,7 @@
     refreshMyOrderIfIdle_();
     checkDataVersion_(true);
     scheduleSyncPoll_();
+    noticeCheckOnReturn_();
   }
 
   document.addEventListener('visibilitychange', function () {
@@ -5479,6 +5582,7 @@
 
   function showToast(message, actionLabel, actionFn) {
     const el = document.getElementById('toast');
+    el.className = 'toast';
     el.innerHTML = '';
     const msg = document.createElement('span');
     msg.textContent = message;
@@ -5492,6 +5596,11 @@
     el.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, actionLabel ? 10000 : 5000);
+  }
+
+  function showErrorToast_(message) {
+    showToast(message);
+    document.getElementById('toast').classList.add('isError');
   }
 
   function hideToast() {
@@ -5722,8 +5831,8 @@
 
   function openMasterModal() {
     document.getElementById('masterModalOverlay').hidden = false;
-    document.getElementById('masterAddRowBtn').hidden = !IS_MASTER_ADMIN;
-    document.getElementById('masterSaveBtn').hidden = !IS_MASTER_ADMIN;
+    masterApplyTabUi_();
+    if (masterState.current === NOTICE_TAB_) noticeFetchList_();
     if (masterState.names.length === 0) {
       google.script.run.withSuccessHandler(function (names) {
         masterState.names = names;
@@ -5758,12 +5867,45 @@
       btn.addEventListener('click', function () { requestLoadMasterList_(name); });
       wrap.appendChild(btn);
     });
+    if (IS_MASTER_ADMIN) {
+      const nb = document.createElement('button');
+      nb.textContent = NOTICE_TAB_;
+      nb.className = masterState.current === NOTICE_TAB_ ? 'active' : '';
+      nb.addEventListener('click', function () { requestLoadMasterList_(NOTICE_TAB_); });
+      wrap.appendChild(nb);
+    }
+    masterApplyTabUi_();
+  }
+
+  // 「お知らせ」タブは画面だけのタブ（サーバーのマスタ一覧にはない）。表・行追加・保存の出し分けをここで行う
+  const NOTICE_TAB_ = 'お知らせ';
+  function masterApplyTabUi_() {
+    const isNotice = IS_MASTER_ADMIN && masterState.current === NOTICE_TAB_;
+    document.getElementById('masterTableWrap').hidden = isNotice;
+    document.getElementById('noticePanel').hidden = !isNotice;
+    document.getElementById('masterAddRowBtn').hidden = isNotice || !IS_MASTER_ADMIN;
+    document.getElementById('masterSaveBtn').hidden = isNotice || !IS_MASTER_ADMIN;
   }
 
   // 未保存の変更がある状態で別のタブ（事業部マスタ→社員マスタ等）へ切り替えようとした場合も
   // 確認を挟む（切り替えるとmasterState.rowsが読み込み直されて編集内容が失われるため）
   function requestLoadMasterList_(name) {
     if (name === masterState.current) return;
+    if (name === NOTICE_TAB_) {
+      const openNotice = function () {
+        masterState.current = NOTICE_TAB_;
+        masterState.dirty = false;
+        renderMasterTabs();
+        noticeRenderAdminList_();
+        noticeFetchList_();
+      };
+      if (masterState.dirty) {
+        showConfirm('保存されていない変更があります。このまま切り替えますか？', openNotice, '切り替える');
+        return;
+      }
+      openNotice();
+      return;
+    }
     if (masterState.dirty) {
       showConfirm('保存されていない変更があります。このまま切り替えますか？', function () { loadMasterList(name); }, '切り替える');
       return;
@@ -5910,6 +6052,339 @@
       showToast(msg);
     }).withFailureHandler(showRunError).saveMasterListData(masterState.current, masterState.rows);
   }
+
+  // ==== お知らせ ====
+  // サーバー（listNotices）は、管理者には全件（isAdminView:true）、管理者以外には「表示中で未確認」だけを返す。
+  // ポップアップに出す分は、管理者の返事も含めて画面側で status === 'active' && !confirmedByMe に絞る
+  // （予約中は管理者でも一覧にだけ出す）。新しい定期タイマーは持たず、起動時と「戻ってきたとき」だけ取得する
+  const NOTICE_TITLE_MAX_ = 40;
+  const NOTICE_BODY_MAX_ = 1000;
+  let noticeQueue_ = [];        // ポップアップに出す分（開始の古い順）。表示中の1件目は noticeQueue_[0]
+  let noticeShown_ = null;      // いま表示しているお知らせ
+  let noticeDone_ = 0;          // 今回のポップアップ中に確認した件数（「3 / 5」の数え方に使う）
+  let noticeAdminItems_ = [];   // 管理者の全件一覧
+  const noticeConfirmedIds_ = new Set(); // 確認が成功したid（古い応答で復活させない）
+  const noticePending_ = new Set();      // 確認を送信中のid
+  let noticeFetchSeq_ = 0;      // 取得の連番。最新の取得の応答だけを使う
+  let noticeListGen_ = 0;       // 保存・削除の世代。開始時と完了時に進め、古い取り直しの応答を捨てる
+  let noticeWritesInFlight_ = 0;
+  let noticeLastFetchAt_ = 0;
+  const noticeEdit_ = { id: null, busy: false };
+
+  function noticeErrorMessage_(err) {
+    const code = err && err.errorCode;
+    if (code === 'FORBIDDEN') return 'この操作は管理者だけができます';
+    if (code === 'BAD_REQUEST') return '入力を確認してください';
+    if (code === 'NOT_FOUND') return 'そのお知らせは見つかりません';
+    if (code === 'NOT_ACTIVE') return 'このお知らせはもう表示されていません';
+    if (code === 'BUSY') return '混み合っています。少し待って、もう一度ためしてください';
+    return (err && err.message) ? err.message : 'うまくいきませんでした。もう一度お試しください';
+  }
+
+  // ---- 日時（ISO ⇔ 日本時間の入力欄） ----
+  function noticeJstParts_(isoOrMs) {
+    const t = new Date((typeof isoOrMs === 'number' ? isoOrMs : Date.parse(isoOrMs)) + 9 * 3600 * 1000);
+    return { y: t.getUTCFullYear(), mo: t.getUTCMonth() + 1, d: t.getUTCDate(), h: t.getUTCHours(), mi: t.getUTCMinutes() };
+  }
+  function noticeToInput_(isoOrMs) {
+    const p = noticeJstParts_(isoOrMs);
+    return p.y + '-' + pad2(p.mo) + '-' + pad2(p.d) + 'T' + pad2(p.h) + ':' + pad2(p.mi);
+  }
+  function noticeFromInput_(v) {
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v || '') ? v + ':00+09:00' : null;
+  }
+  function noticeFormatTime_(iso) {
+    if (!iso || isNaN(Date.parse(iso))) return '';
+    const p = noticeJstParts_(iso);
+    return p.y + '/' + p.mo + '/' + p.d + ' ' + pad2(p.h) + ':' + pad2(p.mi);
+  }
+
+  // ---- 取得 ----
+  function noticeFetchList_() {
+    if (!CURRENT_EMAIL) return;
+    noticeLastFetchAt_ = Date.now();
+    const seq = ++noticeFetchSeq_;
+    const gen = noticeListGen_;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        // 新しい取得が始まった／取得中に保存・削除が始まった・終わった：古い応答は使わない
+        if (seq !== noticeFetchSeq_ || gen !== noticeListGen_ || noticeWritesInFlight_ > 0) return;
+        if (!res || !Array.isArray(res.items)) return;
+        if (res.isAdminView) {
+          noticeAdminItems_ = res.items;
+          noticeRenderAdminList_();
+        }
+        noticeApplyPopupItems_(res.items);
+      })
+      .withFailureHandler(function () { /* 何も表示せず、次の機会に再取得する */ })
+      .listNotices();
+  }
+
+  // 戻ってきたとき：自動反映の「戻ってきたとき」と同じ間隔（30秒）で間引く
+  function noticeCheckOnReturn_() {
+    if (Date.now() - noticeLastFetchAt_ < syncReturnMinMs_()) return;
+    noticeFetchList_();
+  }
+
+  // ---- ポップアップ ----
+  function noticeCanShowNow_() {
+    if (!CURRENT_EMAIL) return false;
+    if (!document.getElementById('loginScreen').hidden || !document.getElementById('bootLoadingScreen').hidden) return false;
+    return !document.querySelector('.modalOverlay:not([hidden])');
+  }
+
+  function noticeApplyPopupItems_(items) {
+    const list = items.filter(function (it) {
+      return it.status === 'active' && !it.confirmedByMe && !noticeConfirmedIds_.has(it.id) && !noticePending_.has(it.id);
+    }).sort(function (a, b) { return Date.parse(a.startAt) - Date.parse(b.startAt); });
+    const shownId = noticeShown_ && noticeShown_.id;
+    const current = shownId ? list.filter(function (it) { return it.id === shownId; })[0] : null;
+    if (current) {
+      // 表示中の1件は動かさない（内容が編集されていたら新しい内容にする）
+      noticeQueue_ = [current].concat(list.filter(function (it) { return it.id !== shownId; }));
+    } else {
+      noticeQueue_ = list;
+    }
+    noticeRenderPopup_();
+  }
+
+  function noticeRenderPopup_() {
+    const overlay = document.getElementById('noticeOverlay');
+    if (noticeQueue_.length === 0) {
+      noticeShown_ = null;
+      noticeDone_ = 0;
+      overlay.hidden = true;
+      return;
+    }
+    if (!noticeShown_ && !noticeCanShowNow_()) return; // 編集ウィンドウなどが開いている間は出さない（閉じたあとに出す）
+    const item = noticeQueue_[0];
+    noticeShown_ = item;
+    document.getElementById('noticePopupTitle').textContent = '📢 ' + item.title;
+    document.getElementById('noticePopupMeta').textContent = noticeFormatTime_(item.startAt) + '　管理者より';
+    const body = document.getElementById('noticePopupBody');
+    body.textContent = item.body;
+    body.scrollTop = 0;
+    const total = noticeDone_ + noticeQueue_.length;
+    const counter = document.getElementById('noticePopupCounter');
+    counter.hidden = total <= 1;
+    counter.textContent = (noticeDone_ + 1) + ' / ' + total;
+    const wasHidden = overlay.hidden;
+    overlay.hidden = false;
+    if (wasHidden) document.getElementById('noticeConfirmBtn').focus();
+  }
+
+  function noticeConfirm_() {
+    const item = noticeShown_;
+    if (!item) return;
+    // 先に画面から消して、サーバーへ送る
+    noticeQueue_.shift();
+    noticeDone_++;
+    noticePending_.add(item.id);
+    noticeShown_ = null;
+    noticeRenderPopup_();
+    google.script.run
+      .withSuccessHandler(function () {
+        noticePending_.delete(item.id);
+        noticeConfirmedIds_.add(item.id);
+      })
+      .withFailureHandler(function (err) {
+        noticePending_.delete(item.id);
+        if (err && err.errorCode === 'NOT_ACTIVE') {
+          noticeConfirmedIds_.add(item.id); // もう表示されていない：そのまま消す（トーストなし）
+          return;
+        }
+        // 失敗：もう一度出して、押し直してもらう
+        noticeQueue_.unshift(item);
+        noticeDone_ = Math.max(0, noticeDone_ - 1);
+        noticeShown_ = null;
+        noticeRenderPopup_();
+        showErrorToast_('確認の保存に失敗しました。もう一度押してください');
+      })
+      .confirmNotice(item.id);
+  }
+
+  // ---- 管理者の一覧 ----
+  const NOTICE_STATUS_ORDER_ = { scheduled: 0, active: 1, ended: 2 };
+  const NOTICE_STATUS_LABEL_ = { scheduled: '予約中', active: '表示中', ended: '終了' };
+
+  function noticeRenderAdminList_() {
+    const wrap = document.getElementById('noticeAdminList');
+    if (!wrap) return;
+    wrap.textContent = '';
+    if (noticeAdminItems_.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'noticeEmpty';
+      empty.textContent = 'お知らせはまだありません';
+      wrap.appendChild(empty);
+      return;
+    }
+    const items = noticeAdminItems_.slice().sort(function (a, b) {
+      const da = NOTICE_STATUS_ORDER_[a.status] - NOTICE_STATUS_ORDER_[b.status];
+      return da !== 0 ? da : Date.parse(b.startAt) - Date.parse(a.startAt);
+    });
+    items.forEach(function (it) {
+      const row = document.createElement('div');
+      row.className = 'noticeAdminRow';
+      row.dataset.noticeId = it.id;
+      const main = document.createElement('div');
+      main.className = 'noticeAdminMain';
+      const head = document.createElement('div');
+      head.className = 'noticeAdminHead';
+      const tag = document.createElement('span');
+      tag.className = 'noticeTag ' + it.status;
+      tag.textContent = NOTICE_STATUS_LABEL_[it.status] || '';
+      const name = document.createElement('span');
+      name.className = 'noticeAdminName';
+      name.textContent = it.title;
+      head.appendChild(tag);
+      head.appendChild(name);
+      const sub = document.createElement('div');
+      sub.className = 'noticeAdminSub';
+      sub.textContent = '表示開始：' + noticeFormatTime_(it.startAt) + '／終了：' + (it.endAt ? noticeFormatTime_(it.endAt) : 'なし') +
+        '／' + (it.status === 'scheduled' ? '管理者だけに見えています' : '確認済み ' + (it.confirmedCount || 0) + '人');
+      main.appendChild(head);
+      main.appendChild(sub);
+      const btns = document.createElement('div');
+      btns.className = 'noticeAdminBtns';
+      const edit = document.createElement('button');
+      edit.textContent = '編集';
+      edit.className = 'noticeEditBtn';
+      edit.addEventListener('click', function () { noticeOpenEditor_(it); });
+      const del = document.createElement('button');
+      del.textContent = '削除';
+      del.className = 'danger noticeDeleteBtn';
+      del.addEventListener('click', function () { noticeDelete_(it); });
+      btns.appendChild(edit);
+      btns.appendChild(del);
+      row.appendChild(main);
+      row.appendChild(btns);
+      wrap.appendChild(row);
+    });
+  }
+
+  // ---- 保存・削除（保存の入口はsbMakeRunCaller_。取り直しは世代で守る） ----
+  function noticeBeginWrite_() {
+    noticeWritesInFlight_++;
+    noticeListGen_++;
+  }
+  function noticeEndWrite_() {
+    noticeWritesInFlight_--;
+    noticeListGen_++;
+    if (noticeWritesInFlight_ === 0) setTimeout(noticeFetchList_, 0);
+  }
+
+  function noticeDelete_(it) {
+    showConfirm('このお知らせと、確認の記録を消します。元に戻せません。', function () {
+      noticeBeginWrite_();
+      google.script.run
+        .withSuccessHandler(function () { noticeEndWrite_(); })
+        .withFailureHandler(function (err) {
+          err.message = noticeErrorMessage_(err);
+          noticeEndWrite_();
+        })
+        .deleteNotice(it.id);
+    }, '削除する');
+  }
+
+  // ---- 編集ウィンドウ ----
+  function noticeOpenEditor_(it) {
+    noticeEdit_.id = it ? it.id : null;
+    noticeEdit_.busy = false;
+    document.getElementById('noticeEditHeading').textContent = it ? 'お知らせを編集' : '新しいお知らせ';
+    document.getElementById('noticeEditTitle').value = it ? it.title : '';
+    document.getElementById('noticeEditBody').value = it ? it.body : '';
+    document.getElementById('noticeEditStart').value = noticeToInput_(it ? it.startAt : Date.now());
+    document.getElementById('noticeEditEnd').value = it && it.endAt ? noticeToInput_(it.endAt) : '';
+    document.getElementById('noticeEditOverlay').hidden = false;
+    noticeUpdateForm_(false);
+  }
+
+  function noticeCloseEditor_() {
+    document.getElementById('noticeEditOverlay').hidden = true;
+    noticeEdit_.busy = false;
+  }
+
+  // 入力の検証。画面で止めるので、NGのときは保存を送らない
+  function noticeValidate_() {
+    const title = document.getElementById('noticeEditTitle').value.trim();
+    const body = document.getElementById('noticeEditBody').value;
+    const startV = document.getElementById('noticeEditStart').value;
+    const endV = document.getElementById('noticeEditEnd').value;
+    const startAt = noticeFromInput_(startV);
+    const endAt = endV ? noticeFromInput_(endV) : null;
+    let error = '';
+    if (title.length < 1) error = 'タイトルを入力してください';
+    else if (title.length > NOTICE_TITLE_MAX_) error = 'タイトルは' + NOTICE_TITLE_MAX_ + '文字までです';
+    else if (body.trim().length < 1) error = '本文を入力してください';
+    else if (body.length > NOTICE_BODY_MAX_) error = '本文は' + NOTICE_BODY_MAX_ + '文字までです';
+    else if (!startAt) error = '表示を始める日時を入れてください';
+    else if (endV && !endAt) error = '表示を終える日時の形が正しくありません';
+    else if (endAt && Date.parse(endAt) <= Date.parse(startAt)) error = '終了は開始より後の日時にしてください';
+    return { ok: !error, error: error, title: title, body: body, startAt: startAt, endAt: endAt };
+  }
+
+  function noticeUpdateForm_(showError) {
+    const v = noticeValidate_();
+    const t = document.getElementById('noticeEditTitle').value.trim().length;
+    const b = document.getElementById('noticeEditBody').value.length;
+    const tc = document.getElementById('noticeEditTitleCount');
+    tc.textContent = t + ' / ' + NOTICE_TITLE_MAX_;
+    tc.classList.toggle('over', t > NOTICE_TITLE_MAX_);
+    const bc = document.getElementById('noticeEditBodyCount');
+    bc.textContent = b + ' / ' + NOTICE_BODY_MAX_;
+    bc.classList.toggle('over', b > NOTICE_BODY_MAX_);
+    document.getElementById('noticeEditWarn').hidden = !(v.startAt && Date.parse(v.startAt) > Date.now());
+    // 入力途中は「空」の案内を出さず、文字数・日時の誤りだけ出す
+    const early = !showError && (!v.title || !document.getElementById('noticeEditBody').value.trim());
+    document.getElementById('noticeEditError').textContent = (v.ok || early) ? '' : v.error;
+    document.getElementById('noticeEditSaveBtn').disabled = !v.ok || noticeEdit_.busy;
+  }
+
+  function noticeSave_() {
+    if (noticeEdit_.busy) return;
+    const v = noticeValidate_();
+    if (!v.ok) {
+      noticeUpdateForm_(true);
+      return;
+    }
+    const payload = { title: v.title, body: v.body, startAt: v.startAt, endAt: v.endAt };
+    if (noticeEdit_.id) payload.id = noticeEdit_.id;
+    noticeEdit_.busy = true;
+    document.getElementById('noticeEditSaveBtn').disabled = true;
+    noticeBeginWrite_();
+    google.script.run
+      .withSuccessHandler(function () {
+        noticeEndWrite_();
+        noticeCloseEditor_();
+      })
+      .withFailureHandler(function (err) {
+        err.message = noticeErrorMessage_(err);
+        noticeEdit_.busy = false;
+        document.getElementById('noticeEditError').textContent = err.message;
+        document.getElementById('noticeEditSaveBtn').disabled = false;
+        noticeEndWrite_();
+      })
+      .saveNotice(payload);
+  }
+
+  (function noticeBind_() {
+    document.getElementById('noticeConfirmBtn').addEventListener('click', noticeConfirm_);
+    document.getElementById('noticeNewBtn').addEventListener('click', function () { noticeOpenEditor_(null); });
+    document.getElementById('noticeEditSaveBtn').addEventListener('click', noticeSave_);
+    document.getElementById('noticeEditCancelBtn').addEventListener('click', noticeCloseEditor_);
+    wireModalClose_('noticeEditOverlay', 'noticeEditCloseX', noticeCloseEditor_);
+    ['noticeEditTitle', 'noticeEditBody', 'noticeEditStart', 'noticeEditEnd'].forEach(function (id) {
+      const el = document.getElementById(id);
+      el.addEventListener('input', function () { noticeUpdateForm_(false); });
+      el.addEventListener('change', function () { noticeUpdateForm_(false); });
+    });
+    // ほかのウィンドウが閉じたあとに、待たせていたポップアップを出す
+    document.querySelectorAll('.modalOverlay').forEach(function (el) {
+      new MutationObserver(function () {
+        if (el.hidden) setTimeout(function () { if (noticeQueue_.length > 0) noticeRenderPopup_(); }, 300);
+      }).observe(el, { attributes: true, attributeFilter: ['hidden'] });
+    });
+  })();
 
   // ==== ユーティリティ ====
   function timeToMinutes(hm) {
