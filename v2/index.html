@@ -5244,7 +5244,24 @@
     return Object.assign({ calendarEventId: '', createdBy: CURRENT_EMAIL, updatedAt: '' }, fields);
   }
 
+  // 作成の応答が届く前の予定は、画面だけの仮のID（temp-…）を持つ。サーバーはこのIDを知らないため、
+  // 編集・削除の保存には使えない（BAD_REQUEST）。応答が届くと、開いている編集画面のIDも本物に入れ替える
+  function isPendingTempId_(id) { return typeof id === 'string' && id.indexOf('temp-') === 0; }
+
+  function adoptSavedId_(tempId, realId) {
+    if (state.editingId === tempId) state.editingId = realId;
+  }
+
+  function dropEditingTempId_(tempId) {
+    if (state.editingId === tempId) { state.editingId = null; closeScheduleModal(); }
+  }
+
+  function notifyScheduleCreating_() {
+    showToast('この予定はまだ保存中です。保存が終わってからもう一度お試しください');
+  }
+
   function saveScheduleForm() {
+    if (isPendingTempId_(state.editingId)) { notifyScheduleCreating_(); return; }
     if (state.saving) return; // 二重送信防止（クリック連打などで同じ内容が2回送られるのを防ぐ）
     const isMulti = !document.getElementById('multiModeRow').hidden && document.getElementById('fMultiMode').checked;
     const isMultiDate = !document.getElementById('multiDateModeRow').hidden && document.getElementById('fMultiDateMode').checked;
@@ -5315,7 +5332,7 @@
         }
       }, function (err) {
         state.saving = false;
-        tempIds.forEach(removeScheduleFromState_);
+        tempIds.forEach(function (id) { dropEditingTempId_(id); removeScheduleFromState_(id); });
         Array.from(new Set(combos.map(function (c) { return c.date; }))).forEach(refreshAfterChange_);
         showRunError(err);
       });
@@ -5343,7 +5360,7 @@
     google.script.run
       .withSuccessHandler(function (result) {
         state.saving = false;
-        if (isNew) removeScheduleFromState_(tempId);
+        if (isNew) { removeScheduleFromState_(tempId); adoptSavedId_(tempId, result.id); }
         mergeScheduleIntoState_(result);
         const calendarNotice = calendarNoticeFor_([result], false);
         if (calendarNotice) showToast(calendarNotice);
@@ -5351,9 +5368,12 @@
       .withFailureHandler(function (err) {
         state.saving = false;
         if (isNew) {
+          dropEditingTempId_(tempId);
           removeScheduleFromState_(tempId);
           refreshAfterChange_(schedule.date);
         } else {
+          // 取り直しを待たず、先に元の内容へ戻す（取り直しの応答が遅くても、編集後の内容が残らないように）
+          if (originalSchedule) mergeScheduleIntoState_(originalSchedule);
           // 編集失敗時は仮反映した内容を取り消すため、キャッシュを破棄してから取り直す
           // （楽観的更新で書き換えた月のキャッシュをそのまま信用すると、失敗前の内容が残ってしまうため）
           invalidateMonthCache_(schedule.date.slice(0, 7));
@@ -5378,6 +5398,7 @@
     google.script.run
       .withSuccessHandler(function (result) {
         removeScheduleFromState_(tempIds[idx]);
+        adoptSavedId_(tempIds[idx], result.id);
         mergeScheduleIntoState_(result);
         results.push(result);
         saveBatchSchedules(combos, base, idx + 1, tempIds, results, onDone, onError);
@@ -5388,6 +5409,7 @@
 
   function deleteScheduleForm() {
     if (!state.editingId) return;
+    if (isPendingTempId_(state.editingId)) { notifyScheduleCreating_(); return; }
     const targetId = state.editingId;
     showConfirm('この予定を削除しますか？', function () {
       if (state.saving) return;
