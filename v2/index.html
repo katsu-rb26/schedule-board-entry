@@ -3789,6 +3789,7 @@
     syncTimer_ = setTimeout(function () {
       syncTimer_ = null;
       checkDataVersion_(false);
+      noticePollTick_(); // お知らせも、同じ30秒ごとのタイミングで取る（新しいタイマーは作らない）
       if (!syncInFlight_) scheduleSyncPoll_(); // 条件が揃わず送らなかったときも、次の回を予約する
     }, delay);
   }
@@ -6120,6 +6121,12 @@
       .listNotices();
   }
 
+  // 自動反映の定期確認（scheduleSyncPoll_）と同じタイミングで呼ばれる。保留の条件も同じ
+  // （非表示・モーダルが開いている・保存の通信中・入力欄の操作中は取りにいかない）。失敗しても何も出さない
+  function noticePollTick_() {
+    if (canSyncNow_()) noticeFetchList_();
+  }
+
   // 戻ってきたとき：自動反映の「戻ってきたとき」と同じ間隔（30秒）で間引く
   function noticeCheckOnReturn_() {
     if (Date.now() - noticeLastFetchAt_ < syncReturnMinMs_()) return;
@@ -6381,7 +6388,8 @@
     // ほかのウィンドウが閉じたあとに、待たせていたポップアップを出す
     document.querySelectorAll('.modalOverlay').forEach(function (el) {
       new MutationObserver(function () {
-        if (el.hidden) setTimeout(function () { if (noticeQueue_.length > 0) noticeRenderPopup_(); }, 300);
+        // 開いている間は取りにいかない（保留）ので、閉じたあとに待たせていた分を出し、新しい分も取り直す
+        if (el.hidden) setTimeout(function () { if (noticeQueue_.length > 0) noticeRenderPopup_(); noticeFetchList_(); }, 300);
       }).observe(el, { attributes: true, attributeFilter: ['hidden'] });
     });
   })();
