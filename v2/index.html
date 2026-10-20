@@ -776,6 +776,7 @@
       resize: none; overflow-y: auto;
       transform-origin: top left;
     }
+    .empMemoCell textarea.empMemoLocked { opacity: 0.55; cursor: not-allowed; }
     .empMemoCell textarea:focus {
       background: var(--accent-light); border-color: var(--border-strong);
       /* JS（expandMemoOnFocus_）が設定したheight分だけ下方向に広げ、他の行に重ねて表示する */
@@ -1587,7 +1588,8 @@
   const SYNC_KINDS_ = ['schedule', 'attendance', 'master'];
   const SYNC_WRITE_FNS_ = {
     upsertSchedule: 'schedule', deleteSchedule: 'schedule', restoreSchedule: 'schedule',
-    saveAttendance: 'attendance', updateEmployeeNote: 'master', saveMasterListData: 'master'
+    saveAttendance: 'attendance', updateEmployeeNote: 'master', saveMasterListData: 'master',
+    updateDayNote: 'schedule' // 日ごとのメモ。サーバーは schedule の版番号を +1 する（予定と同じ取り直しに載る）
   };
   let syncSeen_ = null; // 画面が「見た」種別ごとの番号。nullは未取得（起動直後）
   const syncOwnBumps_ = { schedule: new Set(), attendance: new Set(), master: new Set() }; // 自分の保存で上がった番号
@@ -1598,7 +1600,6 @@
   let syncInFlight_ = false;
   let syncFailCount_ = 0;
   let syncTimer_ = null;
-  const memoDraft_ = {}; // 入力したが、まだ保存が終わっていないメモ（人ごと）。日ごとの欄をそろえるために使う
   let syncWritesInFlight_ = 0; // 通信中の保存の数（予定・出退勤・マスタ・並び順・個人設定）。他の端末の変更の確認の保留と、保存の表示の両方が使う（名前は従来のまま）
   // 月データ（予定・出退勤）の「書き込みの世代」。保存の開始時と完了時にそれぞれ1ずつ進める。
   // 月の取り直しは、開始時の世代を覚えておき、応答が届いたときに世代が変わっている／保存中なら捨てる
@@ -1679,7 +1680,8 @@
     'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
     'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion',
-    'listNotices', 'saveNotice', 'deleteNotice', 'confirmNotice'
+    'listNotices', 'saveNotice', 'deleteNotice', 'confirmNotice',
+    'updateDayNote', 'getDayNotesForMonth'
   ];
 
   // ==== 保存の表示（画面中央のカード） ====
@@ -2357,7 +2359,7 @@
   // 保持し、再訪問時は通信を待たず即座に表示する。表示後は裏で最新データを取り直し、差分があれば
   // 静かに再描画する（stale-while-revalidate）。予定・出退勤の保存/削除時はこのキャッシュを
   // 直接パッチする（mergeScheduleIntoCache_・removeScheduleFromCache_・patchAttendanceIntoCache_）。
-  const monthCache = new Map(); // "yyyy-MM" -> { schedules, attendance, fetchedAt }
+  const monthCache = new Map(); // "yyyy-MM" -> { schedules, attendance, notes（日付→氏名→メモ。未取得はnull）, fetchedAt }
   const pendingMonthFetches = new Map(); // "yyyy-MM" -> Promise（同じ月への二重リクエストを防ぐ）
   const MONTH_CACHE_STALE_MS = 20000; // これより新しいキャッシュは無条件で「即時表示・再取得なし」とする
 
@@ -2385,7 +2387,9 @@
     const startGen = monthWriteGen_;
     const p = Promise.all([
       runServer_('getSchedulesForMonth', monthKey),
-      runServer_('getAttendanceForMonth', monthKey)
+      runServer_('getAttendanceForMonth', monthKey),
+      // 日ごとのメモ。失敗しても予定・出退勤の表示は止めず、null（未取得）にして、そのメモ欄は入力できないままにする
+      runServer_('getDayNotesForMonth', monthKey).then(function (n) { return n || {}; }, function () { return null; })
     ]).then(function (results) {
       pendingMonthFetches.delete(monthKey);
       // 取り直しの途中で保存が始まった／終わった（保存中を含む）：この応答は保存前の内容かもしれないので
@@ -2399,7 +2403,10 @@
         // キャッシュが無い（初回表示など）ので、保存の完了を待って取り直した結果を返す
         return whenMonthWritesSettled_().then(function () { return fetchMonth_(monthKey, silent, noPrefetch); });
       }
-      const entry = { schedules: results[0] || [], attendance: results[1] || [], fetchedAt: Date.now() };
+      // 日別メモ：取れなかったときは、前に取れていた内容を残す（無ければnull＝未取得）
+      const prevEntry = monthCache.get(monthKey);
+      const notes = results[2] !== null ? results[2] : ((prevEntry && prevEntry.notes) || null);
+      const entry = { schedules: results[0] || [], attendance: results[1] || [], notes: notes, fetchedAt: Date.now() };
       monthCache.set(monthKey, entry);
       staleMonthKeys_.delete(monthKey);
       if (!noPrefetch) prefetchNeighborMonths_(monthKey);
@@ -2430,6 +2437,7 @@
   // 応答を捨てた月を1回だけ取り直し、表示中の月なら描画し直す（先読みはしない）
   function refetchStaleMonths_() {
     if (monthWritesInFlight_ > 0) return; // まだ保存中：完了時にもう一度呼ばれる
+    if (memoEditing_()) return; // メモを入力中：描き直すと入力が消えるので、欄を離れたあとに取り直す
     const keys = Array.from(staleMonthKeys_);
     staleMonthKeys_.clear();
     keys.forEach(function (mk) {
@@ -2458,7 +2466,11 @@
     if (cached) {
       onUpdate(cached);
       if (Date.now() - cached.fetchedAt > MONTH_CACHE_STALE_MS) {
-        fetchMonth_(monthKey).then(onUpdate, function () { /* showRunErrorはfetchMonth_側で表示済み */ });
+        fetchMonth_(monthKey).then(function (entry) {
+          // メモを入力中は、描き直さない（入力が消えないように）。欄を離れたあとに取り直す
+          if (memoEditing_()) { staleMonthKeys_.add(monthKey); return; }
+          onUpdate(entry);
+        }, function () { /* showRunErrorはfetchMonth_側で表示済み */ });
       }
       if (onSettled) onSettled();
       return;
@@ -2527,6 +2539,29 @@
     const idx = entry.attendance.findIndex(function (a) { return a.date === record.date && a.employeeName === record.employeeName; });
     if (idx !== -1) entry.attendance[idx] = record;
     else entry.attendance.push(record);
+  }
+
+  // 日ごとのメモの保存結果をキャッシュへ反映する（空なら消す）。対象月が未取得（notesがnull）なら何もしない
+  function patchDayNoteIntoCache_(date, name, note) {
+    const entry = monthCache.get(date.slice(0, 7));
+    if (!entry || !entry.notes) return;
+    if ((note || '').trim() === '') {
+      if (entry.notes[date]) {
+        delete entry.notes[date][name];
+        if (Object.keys(entry.notes[date]).length === 0) delete entry.notes[date];
+      }
+      return;
+    }
+    if (!entry.notes[date]) entry.notes[date] = {};
+    entry.notes[date][name] = note;
+  }
+
+  // その日・その人のメモ。loaded=falseは、その月のメモがまだ取れていない（入力させない）
+  function dayNoteInfo_(date, name) {
+    const entry = monthCache.get(date.slice(0, 7));
+    if (!entry || !entry.notes) return { loaded: false, value: '' };
+    const day = entry.notes[date];
+    return { loaded: true, value: (day && Object.prototype.hasOwnProperty.call(day, name)) ? day[name] : '' };
   }
 
   // ==== 初期化 ====
@@ -3798,6 +3833,7 @@
       syncTimer_ = null;
       checkDataVersion_(false);
       noticePollTick_(); // お知らせも、同じ30秒ごとのタイミングで取る（新しいタイマーは作らない）
+      if (canSyncNow_()) retryMissingNotes_(); // メモが取れていない月があれば、静かに取り直す
       if (!syncInFlight_) scheduleSyncPoll_(); // 条件が揃わず送らなかったときも、次の回を予約する
     }, delay);
   }
@@ -3808,6 +3844,7 @@
     checkDataVersion_(true);
     scheduleSyncPoll_();
     noticeCheckOnReturn_();
+    if (canSyncNow_()) retryMissingNotes_();
   }
 
   document.addEventListener('visibilitychange', function () {
@@ -4826,11 +4863,20 @@
     const memoInner = document.createElement('div');
     memoInner.className = 'empMemoInner';
     const memoInput = document.createElement('textarea');
-    memoInput.value = Object.prototype.hasOwnProperty.call(memoDraft_, name) ? memoDraft_[name] : ((employee && employee.note) || '');
+    // メモは「日ごと」（その日・その人で1つ）。その月のメモが取れるまでは入力させない（取れていない欄に書いて、
+    // 保存済みのメモを上書きしてしまわないため）
+    const memoKey = dayNoteKey_(dateStr, name);
+    const noteInfo = dayNoteInfo_(dateStr, name);
+    const pendingNote = Object.prototype.hasOwnProperty.call(memoPending_, memoKey);
+    memoInput.value = pendingNote ? memoPending_[memoKey] : noteInfo.value;
+    memoInput.maxLength = DAY_NOTE_MAX_LEN;
+    memoInput.dataset.memoDate = dateStr;
     memoInput.dataset.memoName = name;
-    // メモは「1人に1つ」（社員マスタの備考列）。どの日の欄で入力しても、画面上の同じ人の欄すべてに、入力した瞬間に反映する
-    memoInput.addEventListener('input', function () { memoDraft_[name] = memoInput.value; syncMemoInputs_(name, memoInput.value, memoInput); });
-    memoInput.addEventListener('change', function () { saveEmployeeNote(name, memoInput.value); });
+    if (!noteInfo.loaded) { memoInput.readOnly = true; memoInput.classList.add('empMemoLocked'); }
+    // 同じ日・同じ人の欄（同時に2か所に出ることがある）だけを、入力した瞬間にそろえる
+    memoInput.addEventListener('input', function () { syncMemoInputs_(dateStr, name, memoInput.value, memoInput); });
+    memoInput.addEventListener('change', function () { if (!memoInput.readOnly) saveDayNote_(dateStr, name, memoInput.value); });
+    memoInput.addEventListener('blur', function () { setTimeout(function () { if (!memoEditing_() && staleMonthKeys_.size > 0) refetchStaleMonths_(); }, 0); });
     memoInput.addEventListener('focus', function () { expandMemoOnFocus_(memoCell, memoInner, memoInput); });
     memoInput.addEventListener('blur', function () { collapseMemoOnBlur_(memoInner, memoInput); });
     memoInner.appendChild(memoInput);
@@ -5713,34 +5759,72 @@
     memoInner.classList.remove('empMemoFocused');
   }
 
-  // 同じ人のメモ欄（日ごとに並ぶ）を、同じ内容にそろえる。except（入力中の欄）は触らない（文字・カーソルを変えない）
-  function syncMemoInputs_(name, value, except) {
+  // 日ごとのメモ（人×日付で1つ）。保存先はサーバーの「日別メモ」。社員マスタの備考（人ごと）は使わない
+  const DAY_NOTE_MAX_LEN = 1000;
+  const memoSaveSeq_ = {};  // 「日付|氏名」ごとの保存の連番。古い保存の結果で、新しい入力を巻き戻さないために使う
+  const memoPending_ = {};  // 保存を送ったが、まだ結果が来ていないメモ。描き直しが入っても、入力した内容を出し続ける
+
+  function dayNoteKey_(date, name) { return date + '|' + name; }
+
+  function memoEditing_() {
+    const a = document.activeElement;
+    return !!(a && a.tagName === 'TEXTAREA' && a.dataset && a.dataset.memoName !== undefined);
+  }
+
+  // 同じ日・同じ人のメモ欄を、同じ内容にそろえる。except（入力中の欄）は触らない（文字・カーソルを変えない）
+  function syncMemoInputs_(date, name, value, except) {
     document.querySelectorAll('textarea[data-memo-name]').forEach(function (el) {
-      if (el !== except && el.dataset.memoName === name && el.value !== value) el.value = value;
+      if (el !== except && el.dataset.memoDate === date && el.dataset.memoName === name && el.value !== value) el.value = value;
     });
   }
 
-  const memoSaveSeq_ = {}; // 人ごとの保存の連番。古い保存の失敗で、新しい入力を巻き戻さないために使う
-
-  function saveEmployeeNote(name, note) {
-    const seq = (memoSaveSeq_[name] || 0) + 1;
-    memoSaveSeq_[name] = seq;
+  function saveDayNote_(date, name, note) {
+    const key = dayNoteKey_(date, name);
+    const seq = (memoSaveSeq_[key] || 0) + 1;
+    memoSaveSeq_[key] = seq;
+    memoPending_[key] = note;
     google.script.run
-      .withSuccessHandler(function () {
-        const emp = EMPLOYEES.filter(function (e) { return e.name === name; })[0];
-        if (emp) emp.note = note; // 確定した値。再読込するまでの間、画面上の状態も合わせておく
-        if (memoSaveSeq_[name] === seq) delete memoDraft_[name];
+      .withSuccessHandler(function (res) {
+        const saved = (res && typeof res.note === 'string') ? res.note : note;
+        patchDayNoteIntoCache_(date, name, saved);
+        if (memoSaveSeq_[key] === seq) {
+          delete memoPending_[key];
+          syncMemoInputs_(date, name, saved, document.activeElement); // 空白だけ→空、などの正規化（入力中の欄は触らない）
+        }
       })
       .withFailureHandler(function (err) {
-        // 失敗：確定している値（emp.note）へ、全日の欄を戻す。後から別の保存を始めていたら、そちらに任せる
-        if (memoSaveSeq_[name] === seq) {
-          delete memoDraft_[name];
-          const emp = EMPLOYEES.filter(function (e) { return e.name === name; })[0];
-          if (emp) syncMemoInputs_(name, emp.note || '', null);
+        // 失敗：その日・その人の欄だけ、保存済みの内容へ戻す。後から別の保存を始めていたら、そちらに任せる
+        if (memoSaveSeq_[key] === seq) {
+          delete memoPending_[key];
+          syncMemoInputs_(date, name, dayNoteInfo_(date, name).value, null);
         }
+        err.message = noticeErrorMessage_(err);
         showRunError(err);
       })
-      .updateEmployeeNote(name, note);
+      .updateDayNote(date, name, note);
+  }
+
+  // メモを取れていない月（取得に失敗した月）を、表示中の月に限って静かに取り直す。
+  // 自動反映の定期確認・「戻ってきたとき」から呼ぶ。失敗してもトーストは出さない
+  const notesRetryInFlight_ = new Set(); // メモの取り直し中の月
+  function retryMissingNotes_() {
+    const monthKey = state.viewMode === 'day' ? state.date.slice(0, 7) : state.month;
+    const entry = monthCache.get(monthKey);
+    if (!entry || entry.notes || notesRetryInFlight_.has(monthKey) || pendingMonthFetches.has(monthKey) || memoEditing_()) return;
+    notesRetryInFlight_.add(monthKey);
+    const startGen = monthWriteGen_;
+    // 月全体ではなく、メモだけを取り直す（予定・出退勤は取り直さない）
+    runServer_('getDayNotesForMonth', monthKey).then(function (notes) {
+      notesRetryInFlight_.delete(monthKey);
+      // 取り直しの途中で保存が始まった／終わった：古いかもしれないので使わない（次の機会に取り直す）
+      if (monthWritesInFlight_ > 0 || monthWriteGen_ !== startGen) return;
+      const cur = monthCache.get(monthKey);
+      if (cur !== entry || cur.notes || !notes) return; // 月のキャッシュが入れ替わった／すでに取れている
+      cur.notes = notes;
+      const currentKey = state.viewMode === 'day' ? state.date.slice(0, 7) : state.month;
+      if (currentKey !== monthKey || memoEditing_()) return;
+      if (state.viewMode === 'day') loadSchedules(); else loadMonthSchedules();
+    }, function () { notesRetryInFlight_.delete(monthKey); /* 次の機会に再取得する */ });
   }
 
   // ==== 個人用Taskリスト（本人のみ閲覧・編集可） ====
