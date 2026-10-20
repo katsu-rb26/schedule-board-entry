@@ -616,10 +616,12 @@
       border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
       background: var(--surface);
     }
-    .cornerName, .cornerAttendance, .cornerAllDay { position: sticky; z-index: 3; }
+    /* 横スクロールしても残る固定列は、画面の広さによらず「メンバー」「出退勤」の2つだけ。
+       「終日」は固定せず、時間軸と一緒に流れる */
+    .cornerName, .cornerAttendance { position: sticky; z-index: 3; }
     .cornerName { flex: 0 0 118px; left: 0; }
     .cornerAttendance { flex: 0 0 106px; left: 118px; }
-    .cornerAllDay { flex: 0 0 130px; left: 224px; }
+    .cornerAllDay { flex: 0 0 130px; }
     .cornerMemo { flex: 0 0 150px; border-right: none; }
     /* flex-shrink:0が無いと、他の列（氏名・出退勤・終日・メモ）は flex:0 0 Npx で
        縮小しない一方、この列だけデフォルトのflex-shrink:1のまま縮んでしまう。
@@ -704,7 +706,7 @@
     .empAllDayCell {
       flex: 0 0 130px; padding: 4px; border-right: 1px solid var(--border);
       display: flex; flex-direction: column; gap: 3px; justify-content: center;
-      position: sticky; left: 224px; z-index: 2; background: var(--surface);
+      background: var(--surface);
     }
     /* 文字サイズは予定バー（.scheduleBlock）と同じ --event-font-size を使う（スマホ・パソコン共通）。
        数値を直接書かず変数を参照するため、予定バー側の文字サイズを変えるとここも追従する */
@@ -748,7 +750,9 @@
     }
     .nowLine {
       position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--now-line);
-      z-index: 4; pointer-events: none;
+      /* 固定列（氏名・出退勤＝z-index 2〜3）より後ろに置く。横スクロールで固定列の上へ食い込まないように。
+         固定列の背景は不透明（--surface／--dayoff-bg）なので、線は固定列の下に隠れる */
+      z-index: 1; pointer-events: none;
     }
     .empMemoCell {
       flex: 0 0 150px; position: relative; /* フォーカス時にtextareaを絶対配置で広げる基準 */
@@ -1067,7 +1071,8 @@
        メディアクエリの条件を満たしていても後続の基本ルールに上書きされてしまう */
     @media (max-width: 480px) {
       /* スマホ幅では、横スクロールしても常に見える固定列を「氏名」だけにする。
-         「出退勤」「終日」は固定をやめ、時間軸グリッドと同じく横スクロール対象に含める */
+         「出退勤」「終日」は固定をやめ、時間軸グリッドと同じく横スクロール対象に含める
+         （「終日」は広い画面でも固定しないので、基本定義側もstickyではない。ここでは幅の扱いだけを上書きする） */
       /* z-indexは、flexアイテムではposition:staticでもスタッキングコンテキストを作ってしまう
          （CSS Flexbox仕様の特例）ため、position:staticに戻すのと合わせてz-indexも解除しないと、
          氏名列（固定・z-index:2）より後にDOM上へ現れるこれらの列が上に描画されてしまう */
@@ -1593,6 +1598,7 @@
   let syncInFlight_ = false;
   let syncFailCount_ = 0;
   let syncTimer_ = null;
+  const memoDraft_ = {}; // 入力したが、まだ保存が終わっていないメモ（人ごと）。日ごとの欄をそろえるために使う
   let syncWritesInFlight_ = 0; // 通信中の保存の数（予定・出退勤・マスタ・並び順・個人設定）。他の端末の変更の確認の保留と、保存の表示の両方が使う（名前は従来のまま）
   // 月データ（予定・出退勤）の「書き込みの世代」。保存の開始時と完了時にそれぞれ1ずつ進める。
   // 月の取り直しは、開始時の世代を覚えておき、応答が届いたときに世代が変わっている／保存中なら捨てる
@@ -4820,7 +4826,10 @@
     const memoInner = document.createElement('div');
     memoInner.className = 'empMemoInner';
     const memoInput = document.createElement('textarea');
-    memoInput.value = (employee && employee.note) || '';
+    memoInput.value = Object.prototype.hasOwnProperty.call(memoDraft_, name) ? memoDraft_[name] : ((employee && employee.note) || '');
+    memoInput.dataset.memoName = name;
+    // メモは「1人に1つ」（社員マスタの備考列）。どの日の欄で入力しても、画面上の同じ人の欄すべてに、入力した瞬間に反映する
+    memoInput.addEventListener('input', function () { memoDraft_[name] = memoInput.value; syncMemoInputs_(name, memoInput.value, memoInput); });
     memoInput.addEventListener('change', function () { saveEmployeeNote(name, memoInput.value); });
     memoInput.addEventListener('focus', function () { expandMemoOnFocus_(memoCell, memoInner, memoInput); });
     memoInput.addEventListener('blur', function () { collapseMemoOnBlur_(memoInner, memoInput); });
@@ -5704,13 +5713,33 @@
     memoInner.classList.remove('empMemoFocused');
   }
 
+  // 同じ人のメモ欄（日ごとに並ぶ）を、同じ内容にそろえる。except（入力中の欄）は触らない（文字・カーソルを変えない）
+  function syncMemoInputs_(name, value, except) {
+    document.querySelectorAll('textarea[data-memo-name]').forEach(function (el) {
+      if (el !== except && el.dataset.memoName === name && el.value !== value) el.value = value;
+    });
+  }
+
+  const memoSaveSeq_ = {}; // 人ごとの保存の連番。古い保存の失敗で、新しい入力を巻き戻さないために使う
+
   function saveEmployeeNote(name, note) {
+    const seq = (memoSaveSeq_[name] || 0) + 1;
+    memoSaveSeq_[name] = seq;
     google.script.run
       .withSuccessHandler(function () {
         const emp = EMPLOYEES.filter(function (e) { return e.name === name; })[0];
-        if (emp) emp.note = note; // 再読込するまでの間、画面上の状態も合わせておく
+        if (emp) emp.note = note; // 確定した値。再読込するまでの間、画面上の状態も合わせておく
+        if (memoSaveSeq_[name] === seq) delete memoDraft_[name];
       })
-      .withFailureHandler(showRunError)
+      .withFailureHandler(function (err) {
+        // 失敗：確定している値（emp.note）へ、全日の欄を戻す。後から別の保存を始めていたら、そちらに任せる
+        if (memoSaveSeq_[name] === seq) {
+          delete memoDraft_[name];
+          const emp = EMPLOYEES.filter(function (e) { return e.name === name; })[0];
+          if (emp) syncMemoInputs_(name, emp.note || '', null);
+        }
+        showRunError(err);
+      })
       .updateEmployeeNote(name, note);
   }
 
