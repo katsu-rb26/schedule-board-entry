@@ -1587,7 +1587,7 @@
   // 他の端末の変更の反映（データの版番号）の状態。処理は「他の端末の変更を反映する」の節にある
   const SYNC_KINDS_ = ['schedule', 'attendance', 'master'];
   const SYNC_WRITE_FNS_ = {
-    upsertSchedule: 'schedule', deleteSchedule: 'schedule', restoreSchedule: 'schedule',
+    upsertSchedule: 'schedule', upsertSchedules: 'schedule', deleteSchedule: 'schedule', restoreSchedule: 'schedule',
     saveAttendance: 'attendance', updateEmployeeNote: 'master', saveMasterListData: 'master',
     updateDayNote: 'schedule' // 日ごとのメモ。サーバーは schedule の版番号を +1 する（予定と同じ取り直しに載る）
   };
@@ -1612,6 +1612,8 @@
   // ログイン中の本人のrole（'member' = 社員マスタに載っている人、'viewer' = 閲覧編集ユーザー）。
   // login・whoamiの応答から設定する。Googleカレンダー連携の欄とチェック欄の出し分けに使う
   let CURRENT_ROLE = '';
+  // サーバーが「まとめ保存」（upsertSchedules）に対応しているか。getInitDataの応答で設定する（無い・falseなら1件ずつ）
+  let SUPPORTS_BATCH_UPSERT_ = false;
 
   // ==== v2追加：入場証の保存（localStorage。使えない場合はメモリのみで保持） ====
   const SB_SESSION_STORAGE_KEY = 'sbSessionToken';
@@ -1675,7 +1677,7 @@
 
   const SB_ALLOWED_RUN_FUNCTIONS_ = [
     'getSchedulesForMonth', 'getAttendanceForMonth', 'upsertSchedule', 'deleteSchedule',
-    'restoreSchedule', 'saveAttendance', 'updateEmployeeNote', 'getMyTasks', 'saveMyTasks',
+    'upsertSchedules', 'restoreSchedule', 'saveAttendance', 'updateEmployeeNote', 'getMyTasks', 'saveMyTasks',
     'getMyGroupSettings', 'saveMyCustomGroups', 'setMyDefaultGroup', 'getThemeModePref',
     'saveThemeModePref', 'getMasterListNames', 'getMasterListData', 'saveMasterListData',
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
@@ -1764,9 +1766,15 @@
 
   // action="call"でfnを1回呼ぶ。BUSYは1秒待って1回だけ再試行する。
   // TOKEN_INVALID/TOKEN_EXPIRED/NOT_ALLOWEDは入場証を削除してログイン画面に戻す。
+  // 通信そのものが失敗したとき（応答が届かない）に、同じ内容で1回だけ自動で再送してよい関数。
+  // サーバーが先に書いていても、同じ予定IDなら二重に登録されない（まとめ保存だけが対象）
+  const SB_RESEND_ON_NETWORK_FAILURE_FNS_ = ['upsertSchedules'];
+  const SB_RESEND_DELAY_MS_ = 1000;
   function sbCall_(fnName, args, onSuccess, onFailure, retried) {
+    let responded = false;
     sbFetch_({ action: 'call', token: sbGetSessionToken_(), fn: fnName, args: args }, sbCallTimeoutMs_(fnName))
       .then(function (res) {
+        responded = true;
         if (res && res.ok) {
           syncNoteOwnBumps_(res.dataVersions);
           if (onSuccess) onSuccess(res.data);
@@ -1786,6 +1794,10 @@
         if (onFailure) onFailure(err);
       })
       .catch(function (netErr) {
+        if (!responded && !retried && SB_RESEND_ON_NETWORK_FAILURE_FNS_.indexOf(fnName) !== -1) {
+          setTimeout(function () { sbCall_(fnName, args, onSuccess, onFailure, true); }, SB_RESEND_DELAY_MS_);
+          return;
+        }
         if (onFailure) onFailure(netErr instanceof Error ? netErr : new Error(String(netErr)));
       });
   }
@@ -1962,6 +1974,7 @@
     TODAY_STR = /^\d{4}-\d{2}-\d{2}$/.test(data.todayStr || '') ? data.todayStr : sbBrowserTodayStr_();
     CURRENT_EMAIL = data.userEmail;
     IS_MASTER_ADMIN = !!data.isMasterAdmin;
+    SUPPORTS_BATCH_UPSERT_ = data.supportsBatchUpsert === true;
     document.getElementById('appUserBadgeName').textContent = data.userName;
     document.getElementById('appUserBadgeEmail').textContent = data.userEmail;
     // サーバー側（server-v2/MasterAdmin.gs）がisAdmin以外にはFORBIDDENを返すため、
@@ -5407,7 +5420,23 @@
 
   // 作成の応答が届く前の予定は、画面だけの仮のID（temp-…）を持つ。サーバーはこのIDを知らないため、
   // 編集・削除の保存には使えない（BAD_REQUEST）。応答が届くと、開いている編集画面のIDも本物に入れ替える
-  function isPendingTempId_(id) { return typeof id === 'string' && id.indexOf('temp-') === 0; }
+  // まとめ保存の途中の予定（画面が先に作ったIDで仮表示している）も、保存が終わるまでは同じ扱いにする
+  const batchPendingIds_ = new Set();
+  function isPendingTempId_(id) { return typeof id === 'string' && (id.indexOf('temp-') === 0 || batchPendingIds_.has(id)); }
+
+  // 予定ID（UUID v4）を画面で作る。まとめ保存で、サーバーに先に伝えるIDとして使う
+  function sbNewUuid_() {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    } catch (e) { /* 下の方法へ */ }
+    const bytes = new Uint8Array(16);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+  }
 
   function adoptSavedId_(tempId, realId) {
     if (state.editingId === tempId) state.editingId = realId;
@@ -5472,15 +5501,23 @@
       });
 
       // 楽観的更新：サーバーの応答を待たず先に全件分を仮表示し、保存は裏で進める
+      // まとめ保存が使えるときは、画面が先に予定ID（UUID）を作ってそのまま仮表示に使い、サーバーにも伝える
+      // （通信が切れて再送しても、同じIDなら二重に登録されない）。使えないときは従来の仮ID（temp-）
+      const useBulk = SUPPORTS_BATCH_UPSERT_;
       const tempIds = combos.map(function (combo, i) {
-        const tempId = 'temp-' + Date.now() + '-' + i;
+        const tempId = useBulk ? sbNewUuid_() : ('temp-' + Date.now() + '-' + i);
+        if (useBulk) batchPendingIds_.add(tempId);
         mergeScheduleIntoState_(buildOptimisticSchedule_(Object.assign({ id: tempId, employeeName: combo.employeeName, calendarSync: combo.calendarSync }, base, { date: combo.date })));
         return tempId;
       });
       closeScheduleModal();
       state.saving = true;
-      saveBatchSchedules(combos, base, 0, tempIds, [], function (results) {
+      const runBatch = useBulk
+        ? function (onDone, onError) { saveBatchSchedulesBulk_(combos, base, tempIds, onDone, onError); }
+        : function (onDone, onError) { saveBatchSchedules(combos, base, 0, tempIds, [], onDone, onError); };
+      runBatch(function (results) {
         state.saving = false;
+        tempIds.forEach(function (id) { batchPendingIds_.delete(id); });
         const calendarNotice = calendarNoticeFor_(results, false);
         if (calendarNotice) {
           showToast(calendarNotice);
@@ -5491,10 +5528,14 @@
         } else {
           showToast(dates.length + '日分の予定を登録しました');
         }
-      }, function (err) {
+      }, function (err, failedFromIdx) {
         state.saving = false;
-        tempIds.forEach(function (id) { dropEditingTempId_(id); removeScheduleFromState_(id); });
-        Array.from(new Set(combos.map(function (c) { return c.date; }))).forEach(refreshAfterChange_);
+        // まとめ保存で途中の組から失敗したときは、それまでに保存できた分は残し、失敗した組以降だけ仮表示を消す。
+        // 1件ずつの経路（failedFromIdxなし）は従来どおり全件
+        const from = typeof failedFromIdx === 'number' ? failedFromIdx : 0;
+        tempIds.forEach(function (id) { batchPendingIds_.delete(id); });
+        tempIds.slice(from).forEach(function (id) { dropEditingTempId_(id); removeScheduleFromState_(id); });
+        Array.from(new Set(combos.slice(from).map(function (c) { return c.date; }))).forEach(refreshAfterChange_);
         showRunError(err);
       });
       return;
@@ -5566,6 +5607,40 @@
       })
       .withFailureHandler(onError)
       .upsertSchedule(schedule);
+  }
+
+  // まとめ保存：複数人・複数日の登録を、upsertSchedules（1回に最大SB_BATCH_MAX_件）で送る。
+  // ids は画面が作った予定ID。仮表示のIDと同じで、返事の予定でそのまま置き換わる（仮IDの入れ替えは要らない）。
+  // 全部成功か全部失敗（1回の呼び出しの中では）。SB_BATCH_MAX_件を超えるときは、その件数ずつ順番に送る。
+  // 途中の組が失敗したら、それ以前に保存できた分は残し、失敗した組以降の仮表示を消す（onError の第2引数が、失敗した最初の位置）。
+  // 通信そのものの失敗は、sbCall_ が同じIDのまま1回だけ自動で再送する（サーバーが書いていても二重にならない）。
+  // alreadySaved の件は「保存済み」として、返事の内容でそのまま置き換える（エラーにしない）。
+  const SB_BATCH_MAX_ = 50;
+  function saveBatchSchedulesBulk_(combos, base, ids, onDone, onError) {
+    const results = [];
+    function sendChunk(start) {
+      if (start >= combos.length) { onDone(results); return; }
+      const end = Math.min(start + SB_BATCH_MAX_, combos.length);
+      const schedules = [];
+      for (let i = start; i < end; i++) {
+        schedules.push(Object.assign({ id: ids[i], employeeName: combos[i].employeeName, calendarSync: combos[i].calendarSync }, base, { date: combos[i].date }));
+      }
+      google.script.run
+        .withSuccessHandler(function (list) {
+          if (!Array.isArray(list) || list.length !== schedules.length) {
+            onError(new Error('うまくいきませんでした。もう一度お試しください'), start);
+            return;
+          }
+          list.forEach(function (saved) {
+            mergeScheduleIntoState_(saved);
+            results.push(saved);
+          });
+          sendChunk(end);
+        })
+        .withFailureHandler(function (err) { onError(err, start); })
+        .upsertSchedules(schedules);
+    }
+    sendChunk(0);
   }
 
   function deleteScheduleForm() {
