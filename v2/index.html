@@ -862,13 +862,39 @@
       border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger);
       font-size: 13px; font-weight: 700;
     }
+    /* カレンダー反映の帯：保存の帯の下に重ねて出す（押せない）。補足の文は折り返す */
+    .calQueueBar {
+      position: fixed; top: 12px; right: 12px; z-index: 150; width: max-content; max-width: min(300px, calc(100vw - 24px));
+      display: flex; flex-direction: column; gap: 2px; padding: 6px 12px; border-radius: 14px;
+      background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-strong);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 12.5px; pointer-events: none;
+    }
+    .calQueueBar[hidden] { display: none; }
+    body.hasSaveBar .calQueueBar { top: 50px; }
+    .calQueueMain { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .calQueueMain svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+    .calQueueNote { font-size: 11px; line-height: 1.4; color: var(--text-secondary); }
+    body.hasCalBar .saveFailStack { top: 92px; }
+    body.hasSaveBar.hasCalBar .saveFailStack { top: 130px; }
+    /* 予定の横の小さな印：待ち＝薄い雲、失敗＝赤い三角。押せない（予定の編集はそのまま受け付ける） */
+    .calMark {
+      display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 1px;
+      margin-left: 3px; border-radius: 50%; background: var(--surface); box-sizing: border-box;
+      vertical-align: -3px; pointer-events: none; flex: none;
+    }
+    .calMark svg { width: 100%; height: 100%; display: block; }
+    .calMark.isPending { color: var(--text-secondary); opacity: 0.75; }
+    .calMark.isFailed { color: var(--danger); }
+    .scheduleBlock > .calMark { position: absolute; right: 3px; bottom: 2px; margin: 0; z-index: 2; }
     .saveBarAnchor { position: relative; height: 0; }
     @media (max-width: 480px) {
       /* スマホ縦：日付の下（ヘッダーの下）の中央に出す。ヘッダーが縮んでも、その下に付いてくる */
       .saveQueueBar { position: absolute; top: 4px; right: auto; left: 50%; transform: translateX(-50%); }
+      .calQueueBar { position: absolute; top: 4px; right: auto; left: 50%; transform: translateX(-50%); }
+      body.hasSaveBar .calQueueBar { top: 38px; }
       /* 失敗の帯は、画面の下寄り（お知らせの下のトースト置き場の上）に出して、上の帯・日付と重ならないようにする */
       .saveFailStack { top: auto; bottom: 84px; left: 12px; right: 12px; width: auto; max-height: calc(100vh - 120px); overflow-y: auto; }
-      body.hasSaveBar .saveFailStack { top: auto; }
+      body.hasSaveBar .saveFailStack, body.hasCalBar .saveFailStack, body.hasSaveBar.hasCalBar .saveFailStack { top: auto; }
     }
     /* 保存中の予定：点線の枠・薄い色・小さい輪（日表示・月表示とも。保存が終わると普通の表示に戻る） */
     .scheduleBlock.schedPending, .allDayChip.schedPending { opacity: 0.6; outline: 1.5px dashed var(--text-secondary); outline-offset: -2px; }
@@ -1241,6 +1267,7 @@
     <!-- 予定の保存の帯の置き場所。スマホ縦では、ヘッダーの下（日付の下）の中央に出す。パソコン幅では右上に固定（CSS参照） -->
     <div class="saveBarAnchor">
       <div class="saveQueueBar" id="saveQueueBar" role="status" aria-live="polite" hidden></div>
+      <div class="calQueueBar" id="calQueueBar" role="status" aria-live="polite" hidden></div>
     </div>
   </div>
 
@@ -1646,6 +1673,7 @@
     upsertSchedule: 'schedule', upsertSchedules: 'schedule', deleteSchedule: 'schedule', restoreSchedule: 'schedule',
     saveAttendance: 'attendance', updateEmployeeNote: 'master', saveMasterListData: 'master',
     updateDayNote: 'schedule' // 日ごとのメモ。サーバーは schedule の版番号を +1 する（予定と同じ取り直しに載る）
+    // processCalendarQueue は入れない：書き換えるのはI列（カレンダーのイベントID）だけで、サーバーは版番号を上げない。保存中の表示にも入れない
   };
   let syncSeen_ = null; // 画面が「見た」種別ごとの番号。nullは未取得（起動直後）
   const syncOwnBumps_ = { schedule: new Set(), attendance: new Set(), master: new Set() }; // 自分の保存で上がった番号
@@ -1739,7 +1767,7 @@
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
     'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion',
     'listNotices', 'saveNotice', 'deleteNotice', 'confirmNotice',
-    'updateDayNote', 'getDayNotesForMonth'
+    'updateDayNote', 'getDayNotesForMonth', 'processCalendarQueue'
   ];
 
   // ==== 保存の表示（画面中央のカード） ====
@@ -2062,6 +2090,7 @@
         document.getElementById('bootLoadingScreen').hidden = true;
         document.getElementById('loginScreen').hidden = true;
         noticeFetchList_();
+        calQueueCheck_(true); // 前回の反映の残りがあれば、続きを処理する
       });
     }, function () {
       if (!sbIsLoginGenCurrent_(gen)) return;
@@ -3919,6 +3948,7 @@
     scheduleSyncPoll_();
     noticeCheckOnReturn_();
     if (canSyncNow_()) retryMissingNotes_();
+    calQueueCheck_(false); // 前の確認から60秒以上たっていれば、カレンダー反映の残りを確かめる
   }
 
   document.addEventListener('visibilitychange', function () {
@@ -4874,6 +4904,8 @@
       const chipPending = isPendingTempId_(s.id); // 保存待ち・保存中：点線の枠・薄い色・小さい輪＋「保存中」
       if (chipPending) chip.classList.add('schedPending');
       chip.textContent = (s.content || '(終日)') + (chipPending ? ' 保存中' : '');
+      const chipMark = calMarkElement_(s);
+      if (chipMark) chip.appendChild(chipMark);
       const customColor = s.color && SCHEDULE_COLOR_HEX[s.color];
       chip.style.background = customColor || '';
       chip.style.color = customColor ? 'var(--overlay-text)' : '';
@@ -5274,6 +5306,8 @@
     if (s.location) tooltipLines.push('場所: ' + s.location);
     if (s.meetingUrl) tooltipLines.push('URL: ' + s.meetingUrl);
     attachTooltip_(block, tooltipLines.join('\n'));
+    const blockMark = calMarkElement_(s); // Googleカレンダーに反映中／入っていない（自分の予定だけ）
+    if (blockMark) block.appendChild(blockMark);
     block.addEventListener('click', function (e) { e.stopPropagation(); openScheduleModal(s); });
 
     return block;
@@ -5645,6 +5679,231 @@
     return true;
   }
 
+  // ==== カレンダー反映を裏で進める（予約シート「カレンダー待ち」。サーバーの CalendarQueue.gs） ====
+  // 保存・削除に {deferCalendar:true} の印を付けて送ると、サーバーは通信が要る保存に calendar.result='pending' を返す。
+  // pending の予定は、予定の保存の順番待ちとは別の1本の処理列（calQ_）で processCalendarQueue(10) を呼び、
+  // 返事の remaining が0になるまで続ける（同時に2本は走らせない）。古いサーバー・緊急停止のときは印が無視されて
+  // 従来の返事（synced など）が来るので、pending 以外の結果は今までどおり扱う。
+  const CAL_DEFER_OPTION_ = { deferCalendar: true };
+  const CAL_QUEUE_LIMIT_ = 10;
+  const CAL_QUEUE_RETRY_MS_ = 5000;     // 通信が失敗したとき、待ってからやり直す
+  const CAL_QUEUE_RETRY_MAX_ = 3;       // やり直しは最大この回数。それでも駄目なら止める（予約はサーバーに残る）
+  const CAL_QUEUE_IDLE_MS_ = 10000;     // 処理できる行が無いが残りがある（再試行の間隔待ち）とき、待ってから見に行く
+  const CAL_QUEUE_IDLE_MAX_ = 12;       // 見に行くのは最大この回数（約2分）。それでも残るなら止める
+  const CAL_QUEUE_RETURN_MIN_MS_ = 60000; // 戻ってきたとき、前の確認からこれ以上たっていれば確認する
+  const CAL_FAIL_SHOWN_KEY_ = 'sbCalFailShown';
+  const CAL_ICON_CLOUD_ = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 18a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 9.5a4.25 4.25 0 0 1 .25 8.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+  const CAL_ICON_WARN_ = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M12 10v5M12 18v.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+
+  function calTestMs_(name, fallback) {
+    return typeof window[name] === 'number' ? window[name] : fallback; // テストだけ短縮できる
+  }
+
+  // 失敗の帯を出した予定ID（画面の中と localStorage に覚える。保存し直して待ちに戻ったら忘れる）
+  function calFailShownLoad_() {
+    try {
+      const list = JSON.parse(window.localStorage.getItem(CAL_FAIL_SHOWN_KEY_) || '[]');
+      return new Set(Array.isArray(list) ? list.filter(function (x) { return typeof x === 'string'; }) : []);
+    } catch (e) { return new Set(); }
+  }
+
+  const calQ_ = {
+    pendingIds: new Set(),   // この画面が出した pending のうち、done の返事がまだの予定ID（☁の件数）
+    mine: new Map(),         // 予定ID → 'pending' | 'failed'（呼んだ人が持ち主の分。返事の mine）
+    failShown: calFailShownLoad_(),
+    running: false,          // 処理列が動いている（同時に2本走らせない）
+    timer: null,             // やり直し・見に行くための待ち
+    netFails: 0,
+    idle: 0,
+    supported: true,         // false＝古いサーバー（processCalendarQueue が無い）
+    lastCheckAt: 0,
+    markSig: ''
+  };
+
+  function calFailShownSave_() {
+    try { window.localStorage.setItem(CAL_FAIL_SHOWN_KEY_, JSON.stringify(Array.from(calQ_.failShown).slice(-200))); } catch (e) { /* 覚えられないだけ */ }
+  }
+
+  function calFailForget_(id) {
+    if (calQ_.failShown.delete(id)) calFailShownSave_();
+  }
+
+  // 右上の「☁ Googleカレンダーに保存中（残り○件）」。この画面が出した pending で、まだ done が来ていない数。1件でもあるときだけ出す
+  function calBarRender_() {
+    const el = document.getElementById('calQueueBar');
+    const n = calQ_.pendingIds.size;
+    if (n <= 0) {
+      el.hidden = true;
+      el.textContent = '';
+      document.body.classList.remove('hasCalBar');
+      return;
+    }
+    el.textContent = '';
+    const main = document.createElement('div');
+    main.className = 'calQueueMain';
+    main.innerHTML = CAL_ICON_CLOUD_;
+    const label = document.createElement('span');
+    label.textContent = 'Googleカレンダーに保存中（残り' + n + '件）';
+    main.appendChild(label);
+    const note = document.createElement('div');
+    note.className = 'calQueueNote';
+    note.textContent = '反映が終わるまで、この画面を開いたままにしてください（閉じても、次に開いたときに続きます）';
+    el.appendChild(main);
+    el.appendChild(note);
+    el.hidden = false;
+    document.body.classList.add('hasCalBar');
+  }
+
+  // 予定の横の印（待ち／失敗）。自分が持ち主の予定だけ。mine と、この画面が出した pending を、手元の予定IDにひもづける
+  function calMarkState_(s) {
+    if (!s || !s.id || !isSelfEmployee_(s.employeeName)) return '';
+    return calQ_.mine.get(s.id) || (calQ_.pendingIds.has(s.id) ? 'pending' : '');
+  }
+
+  function calMarkElement_(s) {
+    const st = calMarkState_(s);
+    if (!st) return null;
+    const mark = document.createElement('span');
+    mark.className = 'calMark ' + (st === 'failed' ? 'isFailed' : 'isPending');
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label', st === 'failed' ? 'Googleカレンダーに入っていません' : 'Googleカレンダーに反映中です');
+    mark.title = st === 'failed' ? 'Googleカレンダーに入っていません' : 'Googleカレンダーに反映中です';
+    mark.innerHTML = st === 'failed' ? CAL_ICON_WARN_ : CAL_ICON_CLOUD_;
+    return mark;
+  }
+
+  // 印が変わったときだけ、表示中の予定を描き直す
+  function calMarksRefresh_() {
+    const parts = [];
+    calQ_.mine.forEach(function (st, id) { parts.push(id + ':' + st); });
+    calQ_.pendingIds.forEach(function (id) { parts.push(id + ':p'); });
+    const sig = parts.sort().join(',');
+    if (sig === calQ_.markSig) return;
+    calQ_.markSig = sig;
+    if (!CURRENT_EMAIL) return;
+    try { deferOrRunMonthRender_(renderCurrentView); } catch (e) { console.error('calMarksRefresh_', e); }
+  }
+
+  // 失敗の帯：同じ予定IDでは2回出さない。予定名などが手元にあれば添える
+  function calShowFailure_(id, failCode) {
+    if (calQ_.failShown.has(id)) return;
+    calQ_.failShown.add(id);
+    calFailShownSave_();
+    const found = state.schedules.find(function (x) { return x.id === id; })
+      || state.monthSchedules.find(function (x) { return x.id === id; });
+    const lines = [];
+    if (found) lines.push(scheduleLabelFor_([found]));
+    lines.push('予定はスケジュール表に保存されています');
+    if (failCode === 'CALENDAR_EXPIRED') lines.push('連携の期限が切れています。メニューから再連携してください。');
+    showSaveFailCard_('Googleカレンダーに入りませんでした', lines);
+  }
+
+  // 保存の返事（予定の配列）から pending を数える。待ちに戻った予定は、失敗の帯を出したことを忘れる
+  function calQueueRegister_(list) {
+    let added = false;
+    (list || []).forEach(function (r) {
+      const res = r && r.calendar && r.calendar.result;
+      if (res !== 'pending' || !r.id) return;
+      calQ_.pendingIds.add(r.id);
+      calFailForget_(r.id);
+      calQ_.mine.delete(r.id);
+      added = true;
+    });
+    if (added) { calBarRender_(); calMarksRefresh_(); calQueueKick_(); }
+  }
+
+  function calQueueRegisterDelete_(result) {
+    if (!result || !result.deletedId || !result.calendar || result.calendar.result !== 'pending') return;
+    calQ_.pendingIds.add(result.deletedId);
+    calBarRender_();
+    calQueueKick_();
+  }
+
+  // 返事の中身を画面に反映する（results・mine）
+  function calApplyResponse_(data) {
+    (data.results || []).forEach(function (r) {
+      if (r && (r.state === 'done' || r.state === 'failed')) calQ_.pendingIds.delete(r.id);
+    });
+    if (data.remaining === 0) calQ_.pendingIds.clear();
+    calQ_.mine = new Map();
+    const failed = [];
+    (data.mine || []).forEach(function (m) {
+      if (!m || !m.id) return;
+      if (m.state === 'pending') { calQ_.mine.set(m.id, 'pending'); calFailForget_(m.id); }
+      else if (m.state === 'failed') { calQ_.mine.set(m.id, 'failed'); failed.push(m); }
+    });
+    calBarRender_();
+    calMarksRefresh_();
+    failed.forEach(function (m) { calShowFailure_(m.id, m.failCode); });
+  }
+
+  function calQueueStop_() {
+    clearTimeout(calQ_.timer);
+    calQ_.timer = null;
+    calQ_.running = false;
+    calQ_.pendingIds.clear(); // 止めたら「☁」は消す。予約はサーバーに残り、次に開いたときに続く
+    calBarRender_();
+    calMarksRefresh_();
+  }
+
+  // 処理列を動かす。すでに動いていれば、待ちの途中なら今すぐやり直すだけ（2本は走らせない）
+  function calQueueKick_() {
+    if (!calQ_.supported || !CURRENT_EMAIL) return;
+    if (calQ_.running) {
+      if (calQ_.timer) { clearTimeout(calQ_.timer); calQ_.timer = null; calQueueStep_(); }
+      return;
+    }
+    calQ_.running = true;
+    calQ_.netFails = 0;
+    calQ_.idle = 0;
+    calQueueStep_();
+  }
+
+  function calQueueStep_() {
+    calQ_.timer = null;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (!data || typeof data !== 'object') { calQueueFailed_({ errorCode: '' }); return; }
+        calQ_.netFails = 0;
+        calApplyResponse_(data);
+        if (data.remaining === 0) { calQ_.running = false; calQ_.idle = 0; return; }
+        if (data.processed > 0) { calQ_.idle = 0; calQ_.timer = setTimeout(calQueueStep_, 0); return; }
+        // 処理できる行が無い：再試行の間隔待ち、または他の画面が処理中。自分の分が残っている間だけ、待って見に行く
+        if (calQ_.pendingIds.size === 0 || calQ_.idle >= CAL_QUEUE_IDLE_MAX_) { calQueueStop_(); return; }
+        calQ_.idle++;
+        calQ_.timer = setTimeout(calQueueStep_, calTestMs_('__SB_TEST_CAL_IDLE_MS__', CAL_QUEUE_IDLE_MS_));
+      })
+      .withFailureHandler(calQueueFailed_)
+      .processCalendarQueue(CAL_QUEUE_LIMIT_);
+  }
+
+  function calQueueFailed_(err) {
+    if (err && err.errorCode === 'BAD_REQUEST') { calQ_.supported = false; calQueueStop_(); return; } // 古いサーバー
+    if (err && (err.errorCode === 'TOKEN_INVALID' || err.errorCode === 'TOKEN_EXPIRED' || err.errorCode === 'NOT_ALLOWED')) { calQueueStop_(); return; }
+    calQ_.netFails++;
+    if (calQ_.netFails > CAL_QUEUE_RETRY_MAX_) { calQueueStop_(); return; } // 帯は出さない
+    calQ_.timer = setTimeout(calQueueStep_, calTestMs_('__SB_TEST_CAL_RETRY_MS__', CAL_QUEUE_RETRY_MS_));
+  }
+
+  // 開いたとき・戻ってきたとき：processCalendarQueue(0) で残りを数え、待ちがあれば処理列を動かす。mine は呼ぶたびに反映する。
+  // 前の確認から force でなければ60秒以上たっていないときは呼ばない
+  function calQueueCheck_(force) {
+    if (!calQ_.supported || !CURRENT_EMAIL || calQ_.running) return;
+    const now = Date.now();
+    if (!force && now - calQ_.lastCheckAt < CAL_QUEUE_RETURN_MIN_MS_) return;
+    calQ_.lastCheckAt = now;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (!data || typeof data !== 'object') return;
+        calApplyResponse_(data);
+        if (data.remaining > 0) calQueueKick_();
+      })
+      .withFailureHandler(function (err) {
+        if (err && err.errorCode === 'BAD_REQUEST') calQ_.supported = false; // 古いサーバー
+      })
+      .processCalendarQueue(0);
+  }
+
   // 予定ID（UUID v4）を画面で作る。まとめ保存で、サーバーに先に伝えるIDとして使う
   function sbNewUuid_() {
     try {
@@ -5798,6 +6057,7 @@
               releaseSchedulePending_([tempId]);
               if (isNew) { removeScheduleFromState_(tempId); adoptSavedId_(tempId, result.id); }
               mergeScheduleIntoState_(result);
+              calQueueRegister_([result]);
               showCalendarFailure_([result], false);
             } finally { finish(); }
           })
@@ -5828,7 +6088,7 @@
               showSaveFailure_(err, [labelItem]);
             } finally { finish(); }
           })
-          .upsertSchedule(schedule);
+          .upsertSchedule(schedule, CAL_DEFER_OPTION_);
       }
     });
   }
@@ -5848,10 +6108,11 @@
         adoptSavedId_(tempIds[idx], result.id);
         mergeScheduleIntoState_(result);
         results.push(result);
+        calQueueRegister_([result]);
         saveBatchSchedules(combos, base, idx + 1, tempIds, results, onDone, onError);
       })
       .withFailureHandler(onError)
-      .upsertSchedule(schedule);
+      .upsertSchedule(schedule, CAL_DEFER_OPTION_);
   }
 
   // まとめ保存：複数人・複数日の登録を、upsertSchedules（1回に最大SB_BATCH_MAX_件）で送る。
@@ -5881,10 +6142,11 @@
             mergeScheduleIntoState_(saved);
             results.push(saved);
           });
+          calQueueRegister_(list);
           sendChunk(end);
         })
         .withFailureHandler(function (err) { onError(err, start); })
-        .upsertSchedules(schedules);
+        .upsertSchedules(schedules, CAL_DEFER_OPTION_);
     }
     sendChunk(0);
   }
@@ -5913,6 +6175,7 @@
                 releaseSchedulePending_([targetId]);
                 if (result && result.deletedId) {
                   // 削除の応答には持ち主の名前が無いため、削除前の予定から持ち主を判定する
+                  calQueueRegisterDelete_(result);
                   if (removedSchedule) {
                     showCalendarFailure_([{ employeeName: removedSchedule.employeeName, date: removedSchedule.date, content: removedSchedule.content, calendar: result.calendar }], true);
                   }
@@ -5927,7 +6190,7 @@
                 showSaveFailure_(err, removedSchedule ? [removedSchedule] : []);
               } finally { finish(); }
             })
-            .deleteSchedule(targetId);
+            .deleteSchedule(targetId, CAL_DEFER_OPTION_);
         }
       });
     });
