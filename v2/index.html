@@ -830,6 +830,57 @@
     .saveIndicator.isError .saveIndicatorSub { color: var(--danger); }
     @keyframes saveIndicatorIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes saveIndicatorSpin { to { transform: rotate(360deg); } }
+    /* 予定の保存の順番待ち：右上の小さな帯（押せない。お知らせのウィンドウ(200)より後ろの150）と、
+       失敗の帯（#saveIndicatorと同じ300。自分で閉じるまで残る）。色は既存のテーマの変数だけを使う */
+    .saveQueueBar {
+      position: fixed; top: 12px; right: 12px; z-index: 150;
+      display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+      background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-strong);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2); font-size: 12.5px; white-space: nowrap;
+      pointer-events: none; max-width: calc(100vw - 24px);
+    }
+    .saveQueueBar[hidden] { display: none; }
+    .saveQueueBar .saveQueueSpin {
+      width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong);
+      border-top-color: var(--accent); animation: saveIndicatorSpin 0.8s linear infinite; flex: none;
+    }
+    .saveQueueBar .saveQueueCheck { color: var(--ok); font-weight: bold; }
+    .saveFailStack {
+      position: fixed; top: 12px; right: 12px; z-index: 300; width: min(360px, calc(100vw - 24px));
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .saveFailStack[hidden] { display: none; }
+    body.hasSaveBar .saveFailStack { top: 56px; }
+    .saveFailCard {
+      background: var(--surface); color: var(--text-primary); border: 2px solid var(--danger);
+      border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); font-size: 12.5px;
+    }
+    .saveFailTitle { font-weight: 700; color: var(--danger); margin-bottom: 4px; }
+    .saveFailLine { color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
+    .saveFailClose {
+      display: block; width: 100%; min-height: 44px; margin-top: 8px; padding: 0 12px;
+      border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger);
+      font-size: 13px; font-weight: 700;
+    }
+    .saveBarAnchor { position: relative; height: 0; }
+    @media (max-width: 480px) {
+      /* スマホ縦：日付の下（ヘッダーの下）の中央に出す。ヘッダーが縮んでも、その下に付いてくる */
+      .saveQueueBar { position: absolute; top: 4px; right: auto; left: 50%; transform: translateX(-50%); }
+      /* 失敗の帯は、画面の下寄り（お知らせの下のトースト置き場の上）に出して、上の帯・日付と重ならないようにする */
+      .saveFailStack { top: auto; bottom: 84px; left: 12px; right: 12px; width: auto; max-height: calc(100vh - 120px); overflow-y: auto; }
+      body.hasSaveBar .saveFailStack { top: auto; }
+    }
+    /* 保存中の予定：点線の枠・薄い色・小さい輪（日表示・月表示とも。保存が終わると普通の表示に戻る） */
+    .scheduleBlock.schedPending, .allDayChip.schedPending { opacity: 0.6; outline: 1.5px dashed var(--text-secondary); outline-offset: -2px; }
+    .scheduleBlock.schedPending::after {
+      content: ''; position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%;
+      border: 1.5px solid currentColor; border-top-color: transparent; animation: saveIndicatorSpin 0.8s linear infinite;
+    }
+    .allDayChip.schedPending::before {
+      content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%;
+      border: 1.5px solid currentColor; border-top-color: transparent; animation: saveIndicatorSpin 0.8s linear infinite;
+      vertical-align: -1px;
+    }
     .toast button {
       background: transparent; border: 1px solid rgba(255,255,255,0.45); color: var(--overlay-text);
       padding: 3px 10px; border-radius: 5px; font-size: 11.5px; white-space: nowrap;
@@ -1186,6 +1237,10 @@
       <button type="button" class="weekArrowBtn" id="weekPrevBtn" aria-label="前週へ">◀</button>
       <div class="weekStripDays" id="weekStripDays"></div>
       <button type="button" class="weekArrowBtn" id="weekNextBtn" aria-label="翌週へ">▶</button>
+    </div>
+    <!-- 予定の保存の帯の置き場所。スマホ縦では、ヘッダーの下（日付の下）の中央に出す。パソコン幅では右上に固定（CSS参照） -->
+    <div class="saveBarAnchor">
+      <div class="saveQueueBar" id="saveQueueBar" role="status" aria-live="polite" hidden></div>
     </div>
   </div>
 
@@ -1564,6 +1619,7 @@
 
   <div class="toast" id="toast" hidden></div>
   <div class="saveIndicator" id="saveIndicator" role="status" aria-live="polite" hidden></div>
+  <div class="saveFailStack" id="saveFailStack" hidden></div>
 
   <!-- 独自ツールチップ（ブラウザ標準title属性は表示までに遅延があるため、ホバーで即時表示する） -->
   <div class="customTooltip" id="customTooltip" hidden></div>
@@ -1696,7 +1752,10 @@
     'saveMyMemberOrder', 'saveMyGroupOrder', 'saveMyCustomGroups', 'setMyDefaultGroup', 'saveThemeModePref',
     'saveNotice', 'deleteNotice' // お知らせの保存・削除（確認はポップアップ側で独自に扱うため含めない）
   ]);
-  const saveUi_ = { delayTimer: null, hideTimer: null, failure: null };
+  // 予定の保存・削除は、画面中央のカードを出さない（右上の帯・失敗の帯が担う。「予定の保存の順番待ち」の節）。
+  // カードを出す保存の数（visibleWrites）で、カードの出し入れを決める。予定の保存が通信中でも、他の保存の表示は変わらない
+  const SAVE_UI_HIDDEN_FNS_ = ['upsertSchedule', 'upsertSchedules', 'deleteSchedule'];
+  const saveUi_ = { delayTimer: null, hideTimer: null, failure: null, visibleWrites: 0 };
 
   function saveUiRender_(kind, err) {
     const el = document.getElementById('saveIndicator');
@@ -1731,21 +1790,21 @@
   }
 
   function saveUiStarted_() {
-    if (syncWritesInFlight_ !== 1) return; // 続けて始まった保存は、同じ表示にまとまる
+    if (saveUi_.visibleWrites !== 1) return; // 続けて始まった保存は、同じ表示にまとまる
     saveUi_.failure = null;
     clearTimeout(saveUi_.delayTimer);
     saveUi_.delayTimer = setTimeout(function () {
       saveUi_.delayTimer = null;
       clearTimeout(saveUi_.hideTimer);
       saveUi_.hideTimer = null;
-      if (syncWritesInFlight_ > 0) saveUiRender_('saving');
+      if (saveUi_.visibleWrites > 0) saveUiRender_('saving');
     }, SAVE_UI_DELAY_MS);
   }
 
   // 保存が1つ終わった（成功・失敗）。呼び出し元の完了処理が済んだ後に呼ぶ（そこから次の保存が始まることがあるため）
   function saveUiSettled_(err) {
     if (err) saveUi_.failure = err;
-    if (syncWritesInFlight_ > 0) return;
+    if (saveUi_.visibleWrites > 0) return;
     clearTimeout(saveUi_.delayTimer);
     saveUi_.delayTimer = null;
     const failure = saveUi_.failure;
@@ -1820,13 +1879,15 @@
         let counted = true;
         let uiOpen = true;
         const touchesMonth = SYNC_WRITE_FNS_[fnName] === 'schedule' || SYNC_WRITE_FNS_[fnName] === 'attendance';
+        const hideCard = SAVE_UI_HIDDEN_FNS_.indexOf(fnName) !== -1; // 予定の保存・削除は、画面中央のカードを出さない
         syncWritesInFlight_++;
         if (touchesMonth) { monthWriteGen_++; monthWritesInFlight_++; }
-        saveUiStarted_();
+        if (!hideCard) { saveUi_.visibleWrites++; saveUiStarted_(); }
         const done = function () {
           if (!counted) return;
           counted = false;
           syncWritesInFlight_--;
+          if (!hideCard) saveUi_.visibleWrites--;
           if (touchesMonth) {
             monthWriteGen_++;
             monthWritesInFlight_--;
@@ -1837,7 +1898,7 @@
         const finishUi = function (err) {
           if (!uiOpen) return;
           uiOpen = false;
-          saveUiSettled_(err);
+          if (!hideCard) saveUiSettled_(err);
         };
         sbCall_(fnName, args,
           function (data) {
@@ -1846,7 +1907,7 @@
           },
           function (err) {
             done();
-            if (err && typeof err === 'object') err.shownInSaveUi = true; // 中央の表示に出すので、showRunErrorではトーストにしない
+            if (!hideCard && err && typeof err === 'object') err.shownInSaveUi = true; // 中央の表示に出すので、showRunErrorではトーストにしない
             try { if (failureHandler) failureHandler(err); } finally { finishUi(err); }
           });
       };
@@ -4692,7 +4753,7 @@
     let maxTextW = 0;
     (schedules || []).forEach(function (s) {
       if (s.allDay && nameSet.has(s.employeeName)) {
-        const w = _measureCtx.measureText(s.content || '(終日)').width;
+        const w = _measureCtx.measureText((s.content || '(終日)') + (isPendingTempId_(s.id) ? ' 保存中' : '')).width + (isPendingTempId_(s.id) ? 24 : 0); // 保存中は、文字と小さい輪の分も含める
         if (w > maxTextW) maxTextW = w;
       }
     });
@@ -4810,7 +4871,9 @@
     allDayItems.forEach(function (s) {
       const chip = document.createElement('div');
       chip.className = 'allDayChip';
-      chip.textContent = s.content || '(終日)';
+      const chipPending = isPendingTempId_(s.id); // 保存待ち・保存中：点線の枠・薄い色・小さい輪＋「保存中」
+      if (chipPending) chip.classList.add('schedPending');
+      chip.textContent = (s.content || '(終日)') + (chipPending ? ' 保存中' : '');
       const customColor = s.color && SCHEDULE_COLOR_HEX[s.color];
       chip.style.background = customColor || '';
       chip.style.color = customColor ? 'var(--overlay-text)' : '';
@@ -5168,7 +5231,10 @@
     // レーンの上下に1pxずつ隙間を残す（既存の重なり表示と同じマージン）
     const maxHeightPx = slotHeight - 2;
 
-    const layout = layoutScheduleBlockText_(s.content, timeWidthPx, maxExtendWidthPx, maxHeightPx);
+    // 保存待ち・保存中：点線の枠・薄い色・小さい輪＋「保存中」
+    const blockPending = isPendingTempId_(s.id);
+    if (blockPending) block.classList.add('schedPending');
+    const layout = layoutScheduleBlockText_(blockPending ? ((s.content || '') + ' 保存中') : s.content, timeWidthPx, maxExtendWidthPx, maxHeightPx);
 
     block.style.left = leftPx + 'px';
     // はみ出す場合も、バー本体（濃い色・タップ対象）は予定の時間の幅のまま。はみ出した文字は別要素で重ねる
@@ -5420,9 +5486,164 @@
 
   // 作成の応答が届く前の予定は、画面だけの仮のID（temp-…）を持つ。サーバーはこのIDを知らないため、
   // 編集・削除の保存には使えない（BAD_REQUEST）。応答が届くと、開いている編集画面のIDも本物に入れ替える
-  // まとめ保存の途中の予定（画面が先に作ったIDで仮表示している）も、保存が終わるまでは同じ扱いにする
-  const batchPendingIds_ = new Set();
-  function isPendingTempId_(id) { return typeof id === 'string' && (id.indexOf('temp-') === 0 || batchPendingIds_.has(id)); }
+  // 保存待ち・保存中の予定のID（登録の仮ID・まとめ保存で画面が先に作ったID・編集中／削除中の予定のID）。
+  // これらの予定は、保存が終わるまで編集・削除を受け付けない。点線の枠で表示する
+  const pendingScheduleIds_ = new Set();
+  function isPendingTempId_(id) { return typeof id === 'string' && (id.indexOf('temp-') === 0 || pendingScheduleIds_.has(id)); }
+  function markSchedulePending_(ids) { ids.forEach(function (id) { pendingScheduleIds_.add(id); }); }
+  function releaseSchedulePending_(ids) { ids.forEach(function (id) { pendingScheduleIds_.delete(id); }); }
+
+  // ==== 予定の保存の順番待ち（キュー） ====
+  // 予定の登録（1件・複数）・編集・削除は、保存中でも次の操作を受け付け、先に受けた順に1つずつ裏で保存する。
+  // 画面への先の反映（仮表示）は、受け付けた時点で行い、失敗したときは、その操作の分だけ元に戻す。
+  // 失敗した操作があっても、あとに待っている操作は続けて保存する。
+  // 残りの件数は「保存中の1件＋待っている件」。複数登録は1回の操作として1件と数える。
+  // state.saving は「順番待ちが空でない」ことを表す（他の端末の変更の確認を止める canSyncNow_ が見る）。
+  const saveQueue_ = { items: [], running: null };
+  const SAVE_BAR_DONE_MS = 1500; // 「保存しました」を出している時間
+  const saveBar_ = { hideTimer: null, failedSinceIdle: false };
+
+  function saveQueueRemaining_() { return saveQueue_.items.length + (saveQueue_.running ? 1 : 0); }
+
+  // op: { ids: 保存待ちにする予定のID, run: function (finish) }。run は保存の通信を始め、終わったら（成功・失敗とも）finish() を1回呼ぶ
+  function enqueueScheduleSave_(op) {
+    markSchedulePending_(op.ids);
+    saveQueue_.items.push(op);
+    state.saving = true;
+    saveBarRender_();
+    pumpScheduleQueue_();
+  }
+
+  function pumpScheduleQueue_() {
+    if (saveQueue_.running) return;
+    const op = saveQueue_.items.shift();
+    if (!op) {
+      state.saving = false;
+      saveBarDone_();
+      return;
+    }
+    saveQueue_.running = op;
+    saveBarRender_();
+    let finished = false;
+    const finish = function () {
+      if (finished) return;
+      finished = true;
+      releaseSchedulePending_(op.ids);
+      saveQueue_.running = null;
+      pumpScheduleQueue_();
+    };
+    try {
+      op.run(finish);
+    } catch (e) {
+      finish();
+      throw e;
+    }
+  }
+
+  // 右上の小さな帯：保存中（残り○件）／保存しました。押せない見た目（pointer-events:none）
+  function saveBarRender_() {
+    const el = document.getElementById('saveQueueBar');
+    const n = saveQueueRemaining_();
+    if (n <= 0) return;
+    clearTimeout(saveBar_.hideTimer);
+    saveBar_.hideTimer = null;
+    el.textContent = '';
+    const spin = document.createElement('span');
+    spin.className = 'saveQueueSpin';
+    const label = document.createElement('span');
+    label.textContent = '保存中（残り' + n + '件）';
+    el.appendChild(spin);
+    el.appendChild(label);
+    el.hidden = false;
+    document.body.classList.add('hasSaveBar');
+  }
+
+  function saveBarHide_() {
+    saveBar_.hideTimer = null;
+    document.getElementById('saveQueueBar').hidden = true;
+    document.body.classList.remove('hasSaveBar');
+  }
+
+  // 順番待ちが空になった。失敗した操作がなかったときだけ「保存しました」を約1.5秒出す（失敗は失敗の帯が知らせる）
+  function saveBarDone_() {
+    const el = document.getElementById('saveQueueBar');
+    clearTimeout(saveBar_.hideTimer);
+    if (saveBar_.failedSinceIdle) {
+      saveBar_.failedSinceIdle = false;
+      saveBarHide_();
+      return;
+    }
+    el.textContent = '';
+    const check = document.createElement('span');
+    check.className = 'saveQueueCheck';
+    check.textContent = '✓';
+    const label = document.createElement('span');
+    label.textContent = '保存しました';
+    el.appendChild(check);
+    el.appendChild(label);
+    el.hidden = false;
+    document.body.classList.add('hasSaveBar');
+    saveBar_.hideTimer = setTimeout(saveBarHide_, SAVE_BAR_DONE_MS);
+  }
+
+  // 失敗の帯：赤系の枠。自分で「閉じる」を押すまで残る。複数あるときは縦に並ぶ
+  function showSaveFailCard_(title, lines) {
+    const stack = document.getElementById('saveFailStack');
+    const card = document.createElement('div');
+    card.className = 'saveFailCard';
+    card.setAttribute('role', 'alert');
+    const t = document.createElement('div');
+    t.className = 'saveFailTitle';
+    t.textContent = title;
+    card.appendChild(t);
+    (lines || []).forEach(function (line) {
+      if (!line) return;
+      const l = document.createElement('div');
+      l.className = 'saveFailLine';
+      l.textContent = line;
+      card.appendChild(l);
+    });
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'saveFailClose';
+    close.textContent = '閉じる';
+    close.addEventListener('click', function () {
+      card.remove();
+      if (!stack.children.length) stack.hidden = true;
+    });
+    card.appendChild(close);
+    stack.appendChild(card);
+    stack.hidden = false;
+  }
+
+  // 予定を指す短い文：「予定名・日付（メンバー名）」。複数あるときは「ほかN件」を添える
+  function scheduleLabelFor_(list) {
+    const first = list[0] || {};
+    const text = (first.content || '(内容未入力)') + '・' + (first.date || '') + '（' + (first.employeeName || '') + '）';
+    return list.length > 1 ? text + ' ほか' + (list.length - 1) + '件' : text;
+  }
+
+  // 保存そのものの失敗：見出しは、いままでのエラー文言。どの予定の保存かを添える
+  function showSaveFailure_(err, list) {
+    saveBar_.failedSinceIdle = true; // 順番待ちが空になったとき、「保存しました」は出さない
+    showSaveFailCard_((err && err.message) ? err.message : String(err), list && list.length ? [scheduleLabelFor_(list)] : []);
+  }
+
+  // カレンダーに入らなかった（保存・削除そのものは成功）。判定は calendarNoticeFor_ をそのまま使い、表示だけを失敗の帯にする
+  // results: [{ employeeName, date, content, calendar: {result} }]
+  function showCalendarFailure_(results, isDelete) {
+    const notice = calendarNoticeFor_(results, isDelete);
+    if (!notice) return false;
+    const texts = isDelete ? CALENDAR_NOTICE_DELETE : CALENDAR_NOTICE_SAVE;
+    const problems = results.filter(function (r) {
+      const res = r && r.calendar && r.calendar.result;
+      return r && r.employeeName && isSelfEmployee_(r.employeeName) && (res === 'failed' || res === 'skipped_expired');
+    });
+    const lines = [scheduleLabelFor_(problems.length ? problems : results), isDelete ? '予定は削除されています' : '予定はスケジュール表に保存されています'];
+    if (notice === texts.expired) lines.push('連携の期限が切れています。メニューから再連携してください。');
+    showSaveFailCard_(isDelete ? 'Googleカレンダーから消せませんでした' : 'Googleカレンダーに入りませんでした', lines);
+    return true;
+  }
 
   // 予定ID（UUID v4）を画面で作る。まとめ保存で、サーバーに先に伝えるIDとして使う
   function sbNewUuid_() {
@@ -5452,7 +5673,8 @@
 
   function saveScheduleForm() {
     if (isPendingTempId_(state.editingId)) { notifyScheduleCreating_(); return; }
-    if (state.saving) return; // 二重送信防止（クリック連打などで同じ内容が2回送られるのを防ぐ）
+    // 二重送信防止：受け付けると入力ウィンドウはすぐ閉じる。閉じたあとの重ねての呼び出しは受け付けない
+    if (document.getElementById('scheduleModalOverlay').hidden) return;
     const isMulti = !document.getElementById('multiModeRow').hidden && document.getElementById('fMultiMode').checked;
     const isMultiDate = !document.getElementById('multiDateModeRow').hidden && document.getElementById('fMultiDateMode').checked;
 
@@ -5505,44 +5727,50 @@
       // （通信が切れて再送しても、同じIDなら二重に登録されない）。使えないときは従来の仮ID（temp-）
       const useBulk = SUPPORTS_BATCH_UPSERT_;
       const tempIds = combos.map(function (combo, i) {
-        const tempId = useBulk ? sbNewUuid_() : ('temp-' + Date.now() + '-' + i);
-        if (useBulk) batchPendingIds_.add(tempId);
+        const tempId = useBulk ? sbNewUuid_() : ('temp-' + Date.now() + '-' + i + '-' + Math.random().toString(36).slice(2, 6));
+        markSchedulePending_([tempId]); // 点線の枠で仮表示する
         mergeScheduleIntoState_(buildOptimisticSchedule_(Object.assign({ id: tempId, employeeName: combo.employeeName, calendarSync: combo.calendarSync }, base, { date: combo.date })));
         return tempId;
       });
       closeScheduleModal();
-      state.saving = true;
-      const runBatch = useBulk
-        ? function (onDone, onError) { saveBatchSchedulesBulk_(combos, base, tempIds, onDone, onError); }
-        : function (onDone, onError) { saveBatchSchedules(combos, base, 0, tempIds, [], onDone, onError); };
-      runBatch(function (results) {
-        state.saving = false;
-        tempIds.forEach(function (id) { batchPendingIds_.delete(id); });
-        const calendarNotice = calendarNoticeFor_(results, false);
-        if (calendarNotice) {
-          showToast(calendarNotice);
-        } else if (isMulti && isMultiDate) {
-          showToast(participants.length + '人 × ' + dates.length + '日分、計' + combos.length + '件の予定を登録しました');
-        } else if (isMulti) {
-          showToast(participants.length + '人分の予定を登録しました');
-        } else {
-          showToast(dates.length + '日分の予定を登録しました');
+      const multiLabelList = combos.map(function (c) { return { content: base.content, date: c.date, employeeName: c.employeeName }; });
+      enqueueScheduleSave_({
+        ids: tempIds,
+        run: function (finish) {
+          const runBatch = useBulk
+            ? function (onDone, onError) { saveBatchSchedulesBulk_(combos, base, tempIds, onDone, onError); }
+            : function (onDone, onError) { saveBatchSchedules(combos, base, 0, tempIds, [], onDone, onError); };
+          runBatch(function (results) {
+            try {
+              releaseSchedulePending_(tempIds);
+              const calendarShown = showCalendarFailure_(results.map(function (r, i) { return Object.assign({ content: base.content, date: combos[i] && combos[i].date }, r); }), false);
+              if (calendarShown) { /* 失敗の帯で知らせる */ }
+              else if (isMulti && isMultiDate) {
+                showToast(participants.length + '人 × ' + dates.length + '日分、計' + combos.length + '件の予定を登録しました');
+              } else if (isMulti) {
+                showToast(participants.length + '人分の予定を登録しました');
+              } else {
+                showToast(dates.length + '日分の予定を登録しました');
+              }
+            } finally { finish(); }
+          }, function (err, failedFromIdx) {
+            try {
+              // まとめ保存で途中の組から失敗したときは、それまでに保存できた分は残し、失敗した組以降だけ仮表示を消す。
+              // 1件ずつの経路（failedFromIdxなし）は従来どおり全件
+              const from = typeof failedFromIdx === 'number' ? failedFromIdx : 0;
+              releaseSchedulePending_(tempIds);
+              tempIds.slice(from).forEach(function (id) { dropEditingTempId_(id); removeScheduleFromState_(id); });
+              Array.from(new Set(combos.slice(from).map(function (c) { return c.date; }))).forEach(refreshAfterChange_);
+              showSaveFailure_(err, multiLabelList.slice(from));
+            } finally { finish(); }
+          });
         }
-      }, function (err, failedFromIdx) {
-        state.saving = false;
-        // まとめ保存で途中の組から失敗したときは、それまでに保存できた分は残し、失敗した組以降だけ仮表示を消す。
-        // 1件ずつの経路（failedFromIdxなし）は従来どおり全件
-        const from = typeof failedFromIdx === 'number' ? failedFromIdx : 0;
-        tempIds.forEach(function (id) { batchPendingIds_.delete(id); });
-        tempIds.slice(from).forEach(function (id) { dropEditingTempId_(id); removeScheduleFromState_(id); });
-        Array.from(new Set(combos.slice(from).map(function (c) { return c.date; }))).forEach(refreshAfterChange_);
-        showRunError(err);
       });
       return;
     }
 
     const isNew = !state.editingId;
-    const tempId = isNew ? ('temp-' + Date.now()) : state.editingId;
+    const tempId = isNew ? ('temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)) : state.editingId;
     const employeeName = document.getElementById('fEmployee').value;
     const schedule = Object.assign({ id: isNew ? null : state.editingId, employeeName: employeeName }, base, {
       calendarSync: calendarSyncForRow_(employeeName, isNew, editingCalendarSync_)
@@ -5555,37 +5783,54 @@
       (state.schedules.find(function (s) { return s.id === state.editingId; }) ||
         state.monthSchedules.find(function (s) { return s.id === state.editingId; }));
 
-    // 楽観的更新：先に画面へ反映してモーダルを閉じ、実際の保存は裏で進める
+    // 楽観的更新：先に画面へ反映してモーダルを閉じ、実際の保存は順番待ちに入れて裏で進める。
+    // 反映した予定は、保存が終わるまで点線の枠で表示し、編集・削除は受け付けない
+    markSchedulePending_([tempId]);
     mergeScheduleIntoState_(buildOptimisticSchedule_(Object.assign({}, schedule, { id: tempId })));
     closeScheduleModal();
-    state.saving = true;
-    google.script.run
-      .withSuccessHandler(function (result) {
-        state.saving = false;
-        if (isNew) { removeScheduleFromState_(tempId); adoptSavedId_(tempId, result.id); }
-        mergeScheduleIntoState_(result);
-        const calendarNotice = calendarNoticeFor_([result], false);
-        if (calendarNotice) showToast(calendarNotice);
-      })
-      .withFailureHandler(function (err) {
-        state.saving = false;
-        if (isNew) {
-          dropEditingTempId_(tempId);
-          removeScheduleFromState_(tempId);
-          refreshAfterChange_(schedule.date);
-        } else {
-          // 取り直しを待たず、先に元の内容へ戻す（取り直しの応答が遅くても、編集後の内容が残らないように）
-          if (originalSchedule) mergeScheduleIntoState_(originalSchedule);
-          // 編集失敗時は仮反映した内容を取り消すため、キャッシュを破棄してから取り直す
-          // （楽観的更新で書き換えた月のキャッシュをそのまま信用すると、失敗前の内容が残ってしまうため）
-          invalidateMonthCache_(schedule.date.slice(0, 7));
-          if (originalSchedule) invalidateMonthCache_(originalSchedule.date.slice(0, 7));
-          if (state.viewMode === 'month' || state.viewMode === 'summary') loadMonthSchedules();
-          else loadSchedules();
-        }
-        showRunError(err);
-      })
-      .upsertSchedule(schedule);
+    const labelItem = { content: schedule.content, date: schedule.date, employeeName: schedule.employeeName };
+    enqueueScheduleSave_({
+      ids: [tempId],
+      run: function (finish) {
+        google.script.run
+          .withSuccessHandler(function (result) {
+            try {
+              releaseSchedulePending_([tempId]);
+              if (isNew) { removeScheduleFromState_(tempId); adoptSavedId_(tempId, result.id); }
+              mergeScheduleIntoState_(result);
+              showCalendarFailure_([result], false);
+            } finally { finish(); }
+          })
+          .withFailureHandler(function (err) {
+            try {
+              releaseSchedulePending_([tempId]);
+              if (isNew) {
+                dropEditingTempId_(tempId);
+                removeScheduleFromState_(tempId);
+                refreshAfterChange_(schedule.date);
+              } else {
+                // 取り直しを待たず、先に元の内容へ戻す（取り直しの応答が遅くても、編集後の内容が残らないように）
+                if (originalSchedule) mergeScheduleIntoState_(originalSchedule);
+                if (saveQueue_.items.length > 0) {
+                  // 後ろに順番待ちの保存がある：月のキャッシュを破棄すると、ほかの保存の仮表示まで消えるため、
+                  // 保存がすべて終わってから1回だけ取り直す
+                  markMonthStale_(schedule.date.slice(0, 7));
+                  if (originalSchedule) markMonthStale_(originalSchedule.date.slice(0, 7));
+                } else {
+                  // 編集失敗時は仮反映した内容を取り消すため、キャッシュを破棄してから取り直す
+                  // （楽観的更新で書き換えた月のキャッシュをそのまま信用すると、失敗前の内容が残ってしまうため）
+                  invalidateMonthCache_(schedule.date.slice(0, 7));
+                  if (originalSchedule) invalidateMonthCache_(originalSchedule.date.slice(0, 7));
+                  if (state.viewMode === 'month' || state.viewMode === 'summary') loadMonthSchedules();
+                  else loadSchedules();
+                }
+              }
+              showSaveFailure_(err, [labelItem]);
+            } finally { finish(); }
+          })
+          .upsertSchedule(schedule);
+      }
+    });
   }
 
   // 複数人分を1件ずつ順番に保存する（並列に投げるとシートへの書き込み行がぶつかる可能性があるため）
@@ -5632,6 +5877,7 @@
             return;
           }
           list.forEach(function (saved) {
+            releaseSchedulePending_([saved.id]); // 保存できた予定は、点線をやめて普通の表示にする
             mergeScheduleIntoState_(saved);
             results.push(saved);
           });
@@ -5648,33 +5894,42 @@
     if (isPendingTempId_(state.editingId)) { notifyScheduleCreating_(); return; }
     const targetId = state.editingId;
     showConfirm('この予定を削除しますか？', function () {
-      if (state.saving) return;
+      if (isPendingTempId_(targetId)) { notifyScheduleCreating_(); return; }
 
-      // 楽観的更新：応答を待たず先に画面から消してモーダルを閉じる。失敗時は元に戻す
+      // 楽観的更新：応答を待たず先に画面から消してモーダルを閉じる。失敗時は元に戻す。保存は順番待ちに入れて裏で進める
       const removedSchedule = state.schedules.find(function (s) { return s.id === targetId; })
         || state.monthSchedules.find(function (s) { return s.id === targetId; });
+      markSchedulePending_([targetId]);
       removeScheduleFromState_(targetId);
       closeScheduleModal();
       refreshAfterChange_(removedSchedule ? removedSchedule.date : state.date);
 
-      state.saving = true;
-      google.script.run
-        .withSuccessHandler(function (result) {
-          state.saving = false;
-          if (result && result.deletedId) {
-            // 削除の応答には持ち主の名前が無いため、削除前の予定から持ち主を判定する
-            const calendarNotice = removedSchedule
-              ? calendarNoticeFor_([{ employeeName: removedSchedule.employeeName, calendar: result.calendar }], true)
-              : '';
-            showToast(calendarNotice || '予定を削除しました', '元に戻す', function () { restoreDeletedSchedule(result.deletedId); });
-          }
-        })
-        .withFailureHandler(function (err) {
-          state.saving = false;
-          if (removedSchedule) mergeScheduleIntoState_(removedSchedule);
-          showRunError(err);
-        })
-        .deleteSchedule(targetId);
+      enqueueScheduleSave_({
+        ids: [targetId],
+        run: function (finish) {
+          google.script.run
+            .withSuccessHandler(function (result) {
+              try {
+                releaseSchedulePending_([targetId]);
+                if (result && result.deletedId) {
+                  // 削除の応答には持ち主の名前が無いため、削除前の予定から持ち主を判定する
+                  if (removedSchedule) {
+                    showCalendarFailure_([{ employeeName: removedSchedule.employeeName, date: removedSchedule.date, content: removedSchedule.content, calendar: result.calendar }], true);
+                  }
+                  showToast('予定を削除しました', '元に戻す', function () { restoreDeletedSchedule(result.deletedId); });
+                }
+              } finally { finish(); }
+            })
+            .withFailureHandler(function (err) {
+              try {
+                releaseSchedulePending_([targetId]);
+                if (removedSchedule) mergeScheduleIntoState_(removedSchedule);
+                showSaveFailure_(err, removedSchedule ? [removedSchedule] : []);
+              } finally { finish(); }
+            })
+            .deleteSchedule(targetId);
+        }
+      });
     });
   }
 
