@@ -5710,6 +5710,7 @@
   const calQ_ = {
     pendingIds: new Set(),   // この画面が出した pending のうち、done の返事がまだの予定ID（☁の件数）
     mine: new Map(),         // 予定ID → 'pending' | 'failed'（呼んだ人が持ち主の分。返事の mine）
+    issued: new Map(),       // 予定ID → { state: 'pending' | 'failed', info }（この画面が pending を受け取った予定。持ち主が他の人でも。再読み込みで消える）
     failShown: calFailShownLoad_(),
     running: false,          // 処理列が動いている（同時に2本走らせない）
     timer: null,             // やり直し・見に行くための待ち
@@ -5756,8 +5757,12 @@
 
   // 予定の横の印（待ち／失敗）。自分が持ち主の予定だけ。mine と、この画面が出した pending を、手元の予定IDにひもづける
   function calMarkState_(s) {
-    if (!s || !s.id || !isSelfEmployee_(s.employeeName)) return '';
-    return calQ_.mine.get(s.id) || (calQ_.pendingIds.has(s.id) ? 'pending' : '');
+    if (!s || !s.id) return '';
+    const issued = calQ_.issued.get(s.id);
+    const issuedState = issued ? issued.state : '';
+    // 自分が持ち主の予定は mine と、この画面が出した分。他の人の予定は、この画面が出した分だけ
+    if (!isSelfEmployee_(s.employeeName)) return issuedState;
+    return calQ_.mine.get(s.id) || (calQ_.pendingIds.has(s.id) ? 'pending' : '') || issuedState;
   }
 
   function calMarkElement_(s) {
@@ -5777,6 +5782,7 @@
     const parts = [];
     calQ_.mine.forEach(function (st, id) { parts.push(id + ':' + st); });
     calQ_.pendingIds.forEach(function (id) { parts.push(id + ':p'); });
+    calQ_.issued.forEach(function (v, id) { parts.push(id + ':i' + v.state); });
     const sig = parts.sort().join(',');
     if (sig === calQ_.markSig) return;
     calQ_.markSig = sig;
@@ -5785,16 +5791,24 @@
   }
 
   // 失敗の帯：同じ予定IDでは2回出さない。予定名などが手元にあれば添える
-  function calShowFailure_(id, failCode) {
+  // info は、この画面が出した予定の控え（予定名・日付・メンバー名）。手元の予定が見つからないときに使う。
+  // 持ち主が自分でない予定は、メンバー名つきの本文にし、連携切れの案内も持ち主向けにする
+  function calShowFailure_(id, failCode, info) {
     if (calQ_.failShown.has(id)) return;
     calQ_.failShown.add(id);
     calFailShownSave_();
     const found = state.schedules.find(function (x) { return x.id === id; })
-      || state.monthSchedules.find(function (x) { return x.id === id; });
+      || state.monthSchedules.find(function (x) { return x.id === id; })
+      || info || null;
     const lines = [];
     if (found) lines.push(scheduleLabelFor_([found]));
     lines.push('予定はスケジュール表に保存されています');
-    if (failCode === 'CALENDAR_EXPIRED') lines.push('連携の期限が切れています。メニューから再連携してください。');
+    const otherOwner = !!(found && found.employeeName && !isSelfEmployee_(found.employeeName));
+    if (failCode === 'CALENDAR_EXPIRED') {
+      lines.push(otherOwner
+        ? 'その人のカレンダーの連携が切れています。その人に再連携を伝えてください。'
+        : '連携の期限が切れています。メニューから再連携してください。');
+    }
     showSaveFailCard_('Googleカレンダーに入りませんでした', lines);
   }
 
@@ -5805,6 +5819,7 @@
       const res = r && r.calendar && r.calendar.result;
       if (res !== 'pending' || !r.id) return;
       calQ_.pendingIds.add(r.id);
+      calQ_.issued.set(r.id, { state: 'pending', info: { content: r.content, date: r.date, employeeName: r.employeeName } });
       calFailForget_(r.id);
       calQ_.mine.delete(r.id);
       added = true;
@@ -5821,10 +5836,15 @@
 
   // 返事の中身を画面に反映する（results・mine）
   function calApplyResponse_(data) {
+    const issuedFailed = []; // この画面が出した予定の failed（持ち主が他の人でも帯を出す）。retry は出さない
     (data.results || []).forEach(function (r) {
-      if (r && (r.state === 'done' || r.state === 'failed')) calQ_.pendingIds.delete(r.id);
+      if (!r) return;
+      if (r.state === 'done' || r.state === 'failed') calQ_.pendingIds.delete(r.id);
+      if (r.state === 'done') calQ_.issued.delete(r.id);
+      const entry = calQ_.issued.get(r.id);
+      if (r.state === 'failed' && entry) { entry.state = 'failed'; issuedFailed.push({ id: r.id, failCode: r.failCode, info: entry.info }); }
     });
-    if (data.remaining === 0) calQ_.pendingIds.clear();
+    if (data.remaining === 0) { calQ_.pendingIds.clear(); calQueueDropIssuedPending_(); }
     calQ_.mine = new Map();
     const failed = [];
     (data.mine || []).forEach(function (m) {
@@ -5834,7 +5854,13 @@
     });
     calBarRender_();
     calMarksRefresh_();
+    issuedFailed.forEach(function (m) { calShowFailure_(m.id, m.failCode, m.info); });
     failed.forEach(function (m) { calShowFailure_(m.id, m.failCode); });
+  }
+
+  // 待ちのまま画面が覚えている予定の控えを捨てる（処理が終わった・止めた）。失敗の控えは、警告マークのために残す
+  function calQueueDropIssuedPending_() {
+    calQ_.issued.forEach(function (v, id) { if (v.state === 'pending') calQ_.issued.delete(id); });
   }
 
   function calQueueStop_() {
@@ -5842,6 +5868,7 @@
     calQ_.timer = null;
     calQ_.running = false;
     calQ_.pendingIds.clear(); // 止めたら「☁」は消す。予約はサーバーに残り、次に開いたときに続く
+    calQueueDropIssuedPending_();
     calBarRender_();
     calMarksRefresh_();
   }
