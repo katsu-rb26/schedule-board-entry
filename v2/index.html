@@ -70,6 +70,11 @@
       --danger-hover: #82271C;
       --sat-color: #2C6FBB;
       --sun-color: #C0392B;
+      /* 祝日のチップ（日表示の見出し・月表示の日付バー）と、月表示の日付の数字 */
+      --holiday-bg: #fdeceb;
+      --holiday-border: #e08a84;
+      --holiday-text: #a8231f;
+      --holiday-num: #b3261e;
       --dayoff-bg: #EEEAE0;
       --dayoff-row-bg: #F5F2E9;
       --now-line: #D2453A;
@@ -122,6 +127,10 @@
         --danger-hover: #ea9075;
         --sat-color: #7ab6f0;
         --sun-color: #e0785f;
+        --holiday-bg: #4a2330;
+        --holiday-border: #c9707a;
+        --holiday-text: #ffc9c9;
+        --holiday-num: #ff9a9a;
         --dayoff-bg: #242a44;
         --dayoff-row-bg: #242a44;
         --now-line: #ff7a5c;
@@ -158,6 +167,10 @@
       --danger-hover: #ea9075;
       --sat-color: #7ab6f0;
       --sun-color: #e0785f;
+      --holiday-bg: #4a2330;
+      --holiday-border: #c9707a;
+      --holiday-text: #ffc9c9;
+      --holiday-num: #ff9a9a;
       --dayoff-bg: #242a44;
       --dayoff-row-bg: #242a44;
       --now-line: #ff7a5c;
@@ -428,6 +441,31 @@
     }
     .appHeader.summaryMode .groupChipsRow,
     .appHeader.summaryMode .weekStrip { display: none; }
+
+    /* 祝日のチップ（表示だけ。押しても何も起きない）。形：日表示は丸（999px）、月表示は角丸5px、先頭に太字の「祝」。
+       予定（塗りつぶし）や失敗の帯（赤い帯）とは、形・枠で見分ける。色は上の--holiday-*（ライト・ダーク両方に定義） */
+    .holidayChip {
+      display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box;
+      padding: 2px 9px; border-radius: 999px; border: 1px solid var(--holiday-border);
+      background: var(--holiday-bg); color: var(--holiday-text);
+      font-size: 12px; font-weight: 600; line-height: 1.4; white-space: nowrap; vertical-align: middle;
+      pointer-events: none; user-select: none;
+    }
+    .holidayChip .holidayMark { font-weight: 800; flex: 0 0 auto; }
+    .holidayChip .holidayName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .periodTitleBtn .holidayChip, .slimDateBtn .holidayChip { margin-left: 8px; }
+    .slimDateBtn .holidayChip { font-size: 11px; padding: 1px 8px; }
+    /* スマホ縦用：日付の下の中央の行。PC幅では出さない。縮んだヘッダーでは、ほかの行と同じく畳む */
+    .holidayRow { display: none; }
+    .holidayRow {
+      justify-content: center; overflow: hidden; max-height: 32px; padding: 0 12px 4px;
+      transition: max-height 0.25s ease, opacity 0.25s ease, padding 0.25s ease;
+    }
+    .appHeader.collapsed .holidayRow { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; pointer-events: none; }
+    @media (max-width: 480px) {
+      .holidayRow:not([hidden]) { display: flex; }
+      .holidayChip.pcOnly, .periodTitleBtn .holidayChip, .slimDateBtn .holidayChip { display: none; }
+    }
 
     /* ☰ドロワー：dateInput（期間タイトルからも共用）を含むため、閉時もdisplay:noneにはせず
        transform+visibilityで隠す（display:noneにするとinput.showPicker()が失敗するため） */
@@ -1109,6 +1147,17 @@
       position: sticky; top: 0; z-index: 6;
     }
     .monthDayHeading.sunday { color: var(--sun-color); }
+    /* 月表示：祝日の日は、日付の数字を日曜と同じ赤系にし、日付バーの中に祝日名のチップを出す（1行・長い名前は「…」） */
+    .monthDayHeading .holidayNum { color: var(--holiday-num); }
+    .monthDayBlock.today .monthDayHeading .holidayNum { color: inherit; } /* 今日のバーは地色がアクセント色のため、数字は元の色（読める色）のまま */
+    .monthDayHeading .holidayChip {
+      flex: 0 1 auto; min-width: 0; margin: 0 auto 0 8px; border-radius: 5px; padding: 1px 7px; font-size: 12px;
+    }
+    .monthDayHeading > span:first-child { flex: 0 0 auto; }
+    .monthDayHeading .monthJumpBtn { flex: 0 0 auto; white-space: nowrap; } /* 長い祝日名のとき、ボタンが2行に折れて日付バーが高くならないよう、チップ側を省略する */
+    @media (max-width: 480px) {
+      .monthDayHeading .holidayChip { font-size: 10px; padding: 1px 5px; }
+    }
     .monthDayHeading.saturday { color: var(--sat-color); }
     .monthDayBlock.today .monthDayHeading { background: var(--accent); color: var(--on-accent); }
     .monthJumpBtn {
@@ -1248,7 +1297,7 @@
         <span class="slimBandDivider" aria-hidden="true"></span>
         <button type="button" class="slimDayBtn" id="slimPrevDayBtn" aria-label="前の日">◀</button>
         <button type="button" class="slimDateBtn" id="slimDateBtn" aria-haspopup="dialog" aria-expanded="false">
-          <span class="dateLong" id="slimDateLong"></span><span class="dateShort" id="slimDateShort"></span>
+          <span class="dateLong" id="slimDateLong"></span><span class="dateShort" id="slimDateShort"></span><span class="holidayChip" id="slimHoliday" hidden></span>
           <svg class="dateBtnIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
         <button type="button" class="slimDayBtn" id="slimNextDayBtn" aria-label="次の日">▶</button>
@@ -1256,6 +1305,8 @@
       <span class="slimSpinner" id="slimSpinner" hidden aria-hidden="true"></span>
       <button id="todayBtn" class="navCurrentBtn slimTodayBtn">今日</button>
     </div>
+
+    <div class="holidayRow" id="holidayRow" hidden></div>
 
     <div class="groupChipsRow" id="groupChipsRow"></div>
 
@@ -1767,7 +1818,7 @@
     'getCalendarLinkStatus', 'startCalendarLink', 'unlinkCalendar',
     'getMyOrder', 'saveMyMemberOrder', 'saveMyGroupOrder', 'getDataVersion',
     'listNotices', 'saveNotice', 'deleteNotice', 'confirmNotice',
-    'updateDayNote', 'getDayNotesForMonth', 'processCalendarQueue'
+    'updateDayNote', 'getDayNotesForMonth', 'processCalendarQueue', 'getHolidaysForYear'
   ];
 
   // ==== 保存の表示（画面中央のカード） ====
@@ -2064,6 +2115,7 @@
     CURRENT_EMAIL = data.userEmail;
     IS_MASTER_ADMIN = !!data.isMasterAdmin;
     SUPPORTS_BATCH_UPSERT_ = data.supportsBatchUpsert === true;
+    holidayApplyInit_(data);
     document.getElementById('appUserBadgeName').textContent = data.userName;
     document.getElementById('appUserBadgeEmail').textContent = data.userEmail;
     // サーバー側（server-v2/MasterAdmin.gs）がisAdmin以外にはFORBIDDENを返すため、
@@ -3280,6 +3332,8 @@
     btn.textContent = longLabel;
     document.getElementById('slimDateLong').textContent = longLabel;
     document.getElementById('slimDateShort').textContent = shortLabel;
+    renderDayHolidayChip_(btn);
+    holidayEnsureYear_(Number((state.viewMode === 'day' ? state.date : state.month).slice(0, 4)));
   }
 
   // 縮んだ帯のグループ名（表示中のグループ・★は既定のグループのみ）。表示中のグループは
@@ -4529,6 +4583,7 @@
     const label = document.createElement('span');
     label.textContent = Number(state.month.split('-')[1]) + '月' + day + '日(' + weekday + ')';
     heading.appendChild(label);
+    decorateMonthHeadingHoliday_(heading, dateStr);
     const jumpBtn = document.createElement('button');
     jumpBtn.type = 'button';
     jumpBtn.className = 'monthJumpBtn';
@@ -5677,6 +5732,118 @@
     if (notice === texts.expired) lines.push('連携の期限が切れています。メニューから再連携してください。');
     showSaveFailCard_(isDelete ? 'Googleカレンダーから消せませんでした' : 'Googleカレンダーに入りませんでした', lines);
     return true;
+  }
+
+  // ==== 祝日（表示だけ。シートには保存せず、押しても何も起きない） ====
+  // データはサーバー（getInitData の holidays：前の年・今年・翌年。getHolidaysForYear(year)：その年）から来る。
+  // 画面の中に「日付→名前」で覚えるだけで、localStorage などには保存しない。
+  // 古いサーバー（supportsHolidays が無い）・holidays の形が違うときは、何も出さず、API も呼ばない（エラーにしない）。
+  const HOLIDAY_RETRY_MS_ = 60000; // 同じ年の取得に失敗したあと、この間は取り直さない
+  const holiday_ = {
+    supported: false,
+    names: new Map(),      // 'YYYY-MM-DD' → 名前（同じ日に複数あれば「・」でつなぐ）
+    years: new Set(),      // 取得済みの年（祝日が1件も無い年も、取得できていれば入る）
+    fetching: new Set(),   // 取得中の年
+    failedAt: new Map()    // 年 → 失敗した時刻
+  };
+
+  function holidayAdd_(list) {
+    list.forEach(function (h) {
+      if (!h || typeof h.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(h.date) || typeof h.name !== 'string' || !h.name) return;
+      const prev = holiday_.names.get(h.date);
+      if (prev === undefined) holiday_.names.set(h.date, h.name);
+      else if (prev.split('・').indexOf(h.name) === -1) holiday_.names.set(h.date, prev + '・' + h.name);
+    });
+  }
+
+  function holidayApplyInit_(data) {
+    holiday_.names.clear(); holiday_.years.clear(); holiday_.fetching.clear(); holiday_.failedAt.clear();
+    holiday_.supported = data.supportsHolidays === true && Array.isArray(data.holidays);
+    if (!holiday_.supported) return;
+    holidayAdd_(data.holidays);
+    holiday_.names.forEach(function (name, date) { holiday_.years.add(Number(date.slice(0, 4))); });
+  }
+
+  function holidayName_(dateStr) {
+    return holiday_.supported ? (holiday_.names.get(dateStr) || '') : '';
+  }
+
+  // 祝日のチップ（textContent で作る。名前を innerHTML に入れない）
+  function holidayChipElement_(name, extraClass) {
+    const chip = document.createElement('span');
+    chip.className = 'holidayChip' + (extraClass ? ' ' + extraClass : '');
+    const mark = document.createElement('b');
+    mark.className = 'holidayMark';
+    mark.textContent = '祝';
+    const label = document.createElement('span');
+    label.className = 'holidayName';
+    label.textContent = name;
+    chip.appendChild(mark);
+    chip.appendChild(label);
+    chip.title = name;
+    return chip;
+  }
+
+  // 日表示：日付の見出し（PC幅は日付の横、スマホ幅は日付の下の中央）に「祝 名前」を1つだけ出す。各メンバーの「終日」欄には出さない
+  function renderDayHolidayChip_(titleBtn) {
+    const name = state.viewMode === 'day' ? holidayName_(state.date) : '';
+    const slim = document.getElementById('slimHoliday');
+    const row = document.getElementById('holidayRow');
+    slim.textContent = '';
+    row.textContent = '';
+    slim.hidden = !name;
+    row.hidden = !name;
+    if (!name) return;
+    titleBtn.appendChild(holidayChipElement_(name, 'pcOnly'));
+    const inSlim = holidayChipElement_(name);
+    while (inSlim.firstChild) slim.appendChild(inSlim.firstChild);
+    slim.title = name;
+    row.appendChild(holidayChipElement_(name));
+  }
+
+  // 月表示：日付バーの中に、祝日名のチップを出し、日付の数字を赤にする（祝日でない日は、何もしない）
+  function decorateMonthHeadingHoliday_(heading, dateStr) {
+    const label = heading.firstElementChild;
+    const old = heading.querySelector('.holidayChip');
+    if (old) old.remove();
+    if (label) label.classList.remove('holidayNum');
+    const name = holidayName_(dateStr);
+    if (!name || !label) return;
+    label.classList.add('holidayNum');
+    label.after(holidayChipElement_(name));
+  }
+
+  // 取得できた年を反映する：日見出しと、描き済みの月表示の日付バーだけを描き直す（画面全体は描き直さない）
+  function holidayRefreshView_() {
+    updatePeriodTitle_();
+    document.querySelectorAll('.monthDayBlock[data-date]').forEach(function (block) {
+      const heading = block.querySelector('.monthDayHeading');
+      if (heading) decorateMonthHeadingHoliday_(heading, block.dataset.date);
+    });
+  }
+
+  // 表示している日付の年が、覚えている年に無いときだけ getHolidaysForYear を呼ぶ。同じ年は1回だけ（取得中・取得済みを覚える）。
+  // 失敗したら何も出さず、1分以内は同じ年を呼ばない
+  function holidayEnsureYear_(year) {
+    if (!holiday_.supported || !CURRENT_EMAIL || !isFinite(year)) return;
+    if (holiday_.years.has(year) || holiday_.fetching.has(year)) return;
+    const failedAt = holiday_.failedAt.get(year);
+    if (failedAt !== undefined && Date.now() - failedAt < HOLIDAY_RETRY_MS_) return;
+    holiday_.fetching.add(year);
+    google.script.run
+      .withSuccessHandler(function (list) {
+        holiday_.fetching.delete(year);
+        if (!Array.isArray(list)) { holiday_.failedAt.set(year, Date.now()); return; }
+        holidayAdd_(list);
+        holiday_.years.add(year);
+        holiday_.failedAt.delete(year);
+        if (list.length > 0) holidayRefreshView_();
+      })
+      .withFailureHandler(function () {
+        holiday_.fetching.delete(year);
+        holiday_.failedAt.set(year, Date.now());
+      })
+      .getHolidaysForYear(year);
   }
 
   // ==== カレンダー反映を裏で進める（予約シート「カレンダー待ち」。サーバーの CalendarQueue.gs） ====
