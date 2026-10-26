@@ -748,6 +748,7 @@
     }
     /* 文字サイズは予定バー（.scheduleBlock）と同じ --event-font-size を使う（スマホ・パソコン共通）。
        数値を直接書かず変数を参照するため、予定バー側の文字サイズを変えるとここも追従する */
+    .allDayChip.noName { min-height: 22px; box-sizing: border-box; } /* 名前が空の終日予定：空欄のまま表示し、押せる高さは保つ */
     .allDayChip {
       background: var(--accent-light); color: var(--accent-text); border-radius: 4px;
       padding: 3px 6px; font-size: var(--event-font-size); cursor: pointer; white-space: normal;
@@ -4838,7 +4839,7 @@
     let maxTextW = 0;
     (schedules || []).forEach(function (s) {
       if (s.allDay && nameSet.has(s.employeeName)) {
-        const w = _measureCtx.measureText((s.content || '(終日)') + (isPendingTempId_(s.id) ? ' 保存中' : '')).width + (isPendingTempId_(s.id) ? 24 : 0); // 保存中は、文字と小さい輪の分も含める
+        const w = _measureCtx.measureText((s.content || '') + (isPendingTempId_(s.id) ? ' 保存中' : '')).width + (isPendingTempId_(s.id) ? 24 : 0); // 保存中は、文字と小さい輪の分も含める
         if (w > maxTextW) maxTextW = w;
       }
     });
@@ -4958,7 +4959,8 @@
       chip.className = 'allDayChip';
       const chipPending = isPendingTempId_(s.id); // 保存待ち・保存中：点線の枠・薄い色・小さい輪＋「保存中」
       if (chipPending) chip.classList.add('schedPending');
-      chip.textContent = (s.content || '(終日)') + (chipPending ? ' 保存中' : '');
+      chip.textContent = (s.content || '') + (chipPending ? ' 保存中' : '');
+      if (!String(s.content || '').trim()) chip.classList.add('noName'); // 名前が空でも、押せる高さを保つ
       const chipMark = calMarkElement_(s);
       if (chipMark) chip.appendChild(chipMark);
       const customColor = s.color && SCHEDULE_COLOR_HEX[s.color];
@@ -5266,7 +5268,7 @@
     // バー上の表示用にだけ、改行（\r\n・\n・\r）を半角スペース1つにして1段落として扱う（保存データ・ツールチップ・編集画面の
     // 元の文字列は変えない）。改行が残ると行数が増えて「収まらない」判定になり、短い予定名でも
     // 折返し分岐で幅が右端（maxExtendWidthPx）まで広がり、薄い色のラインが際限なく伸びていた
-    const paragraphs = [(content || '(内容なし)').replace(/\r\n|\r|\n/g, ' ')];
+    const paragraphs = [(content || '').replace(/\r\n|\r|\n/g, ' ')];
     const maxLines = Math.max(1, Math.floor(maxHeightPx / SCHEDULE_BLOCK_LINE_HEIGHT));
 
     const rawWidths = paragraphs.map(function (p) { return ctx.measureText(p).width; });
