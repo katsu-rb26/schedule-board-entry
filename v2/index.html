@@ -1005,6 +1005,58 @@
     .modalActions .right { display: flex; gap: 8px; }
     .errorText { color: var(--danger); font-size: 12px; margin-top: 6px; }
 
+    /* 使い方の窓（☰メニューの「使い方」）。既存の窓（.modalOverlay）の仕組みに乗せる：開いている間は、自動更新・並び順の取り直し・
+       お知らせの表示を待つ（これらは .modalOverlay:not([hidden]) を見ている）。中が長いときは、窓の中だけスクロールする */
+    .helpOverlay { overscroll-behavior: contain; padding: 16px; box-sizing: border-box; }
+    .helpBox {
+      width: 560px; max-width: 100%; max-height: 100%; box-sizing: border-box; display: flex; flex-direction: column;
+      background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: 14px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.25); overflow: hidden;
+    }
+    .helpHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 20px; flex: 0 0 auto; }
+    .helpTitle { font-size: 20px; font-weight: 800; }
+    .helpSub { font-size: 13px; color: var(--text-secondary); }
+    .helpCloseX {
+      flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; color: var(--text-primary);
+      display: flex; align-items: center; justify-content: center; border-radius: 8px;
+    }
+    .helpCloseX:hover { background: var(--accent-light); }
+    .helpCloseX svg { width: 20px; height: 20px; }
+    .helpScroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .helpItemBtn {
+      display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; box-sizing: border-box; padding: 8px 20px;
+      border: 0; border-top: 1px solid var(--border); border-radius: 0; background: var(--surface); color: var(--text-primary);
+      font-size: 15.5px; font-weight: 800; text-align: left;
+    }
+    .helpItemBtn[aria-expanded="true"] { background: var(--bg); }
+    .helpNum {
+      flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-light); color: var(--accent-text);
+      font-size: 14px; display: flex; align-items: center; justify-content: center;
+    }
+    .helpItemTitle { flex: 1; }
+    .helpChevron { flex: none; width: 18px; height: 18px; transition: transform 0.15s ease; }
+    .helpItemBtn[aria-expanded="true"] .helpChevron { transform: rotate(180deg); }
+    .helpPanel { background: var(--bg); padding: 0 20px 14px 60px; font-size: 14px; line-height: 1.75; }
+    .helpPanel[hidden] { display: none; }
+    .helpPanel ul { margin: 0; padding-left: 1.2em; }
+    .helpPanel li { margin: 3px 0; overflow-wrap: anywhere; }
+    .helpFooter { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); flex: 0 0 auto; }
+    .helpLink {
+      display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; box-sizing: border-box; padding: 0 18px;
+      border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 15px; font-weight: 800; text-decoration: none;
+    }
+    .helpLink svg { width: 16px; height: 16px; flex: none; }
+    .helpFootNote { font-size: 12.5px; color: var(--text-secondary); flex: 1; }
+    .helpFooter #helpCloseBtn { min-height: 46px; padding: 0 18px; border-radius: 10px; font-size: 15px; margin-left: auto; }
+    @media (max-width: 480px) {
+      /* スマホ幅：リンク・小さい文字・閉じるを縦に並べる */
+      .helpFooter { flex-direction: column; align-items: stretch; gap: 8px; }
+      .helpFootNote { flex: none; text-align: center; }
+      .helpFooter #helpCloseBtn { margin-left: 0; width: 100%; }
+      .helpItemBtn { padding-left: 16px; padding-right: 16px; }
+      .helpPanel { padding-left: 56px; padding-right: 16px; }
+    }
+
     /* お知らせ：利用者のポップアップ（z-index 200。保存の表示#saveIndicator(300)より後ろ） */
     .noticeOverlay {
       position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex;
@@ -1415,6 +1467,7 @@
     </div>
 
     <button id="openMasterBtn">⚙ マスタ管理</button>
+    <button id="openHelpBtn">？ 使い方</button>
     <button id="logoutBtn">⏻ ログアウト</button>
 
     <p class="drawerFootnote">グループは最大10個まで登録できます</p>
@@ -1526,6 +1579,47 @@
   </div>
 
   <!-- マスタ管理モーダル -->
+  <!-- 使い方（☰メニューの「使い方」）。項目を押すと、その項目だけ開く -->
+  <div class="modalOverlay helpOverlay" id="helpOverlay" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
+    <div class="helpBox">
+      <div class="helpHead">
+        <div><div class="helpTitle" id="helpTitle">使い方</div><div class="helpSub">項目を押すと、中身が開きます</div></div>
+        <button type="button" class="helpCloseX" id="helpCloseX" aria-label="閉じる"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+      </div>
+      <div class="helpScroll" id="helpScroll">
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn1" aria-expanded="false" aria-controls="helpPanel1"><span class="helpNum" aria-hidden="true">1</span><span class="helpItemTitle">ログイン</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel1" role="region" aria-labelledby="helpBtn1" hidden><ul><li>Googleアカウント（登録してあるGmail）でログインします。</li><li>入れないときは、使っているGmailが登録されていないかもしれません。管理者（津波）に知らせてください。</li><li>iPhoneのホーム画面から開いてGoogleの画面に移ったときは、左上の「◀」で戻ります。</li><li>別のアカウントで入り直すときは、☰メニューの「ログアウト」を押します。</li></ul></div>
+        </div>
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn2" aria-expanded="false" aria-controls="helpPanel2"><span class="helpNum" aria-hidden="true">2</span><span class="helpItemTitle">予定を入れる</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel2" role="region" aria-labelledby="helpBtn2" hidden><ul><li>入れたいメンバーの行の、時間のあたりを押す（クリック・タップ）と、入力画面が開きます。</li><li>時間と内容を入れて「保存」を押します。時間が決まっていない予定は「終日」にチェックを入れます。</li></ul></div>
+        </div>
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn3" aria-expanded="false" aria-controls="helpPanel3"><span class="helpNum" aria-hidden="true">3</span><span class="helpItemTitle">出退勤と休み</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel3" role="region" aria-labelledby="helpBtn3" hidden><ul><li>自分の行の左側の「出退勤」で、「出」「退」の時と分を選びます。選ぶと自動で保存されます。</li><li>お休みの日は「休」ボタンを押します。もう一度押すと元に戻ります。</li><li>月ごとの勤務時間は、☰メニューの「表示切替」から「勤務集計」で見られます。</li></ul></div>
+        </div>
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn4" aria-expanded="false" aria-controls="helpPanel4"><span class="helpNum" aria-hidden="true">4</span><span class="helpItemTitle">並び順と自分のみ表示</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel4" role="region" aria-labelledby="helpBtn4" hidden><ul><li>「自分のみ表示」を押すと、自分の行だけが出ます。もう一度押すと元に戻ります。</li><li>並び順は、☰メニューの「並び順を編集」で変えられます。変わるのは自分の画面だけです。</li></ul></div>
+        </div>
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn5" aria-expanded="false" aria-controls="helpPanel5"><span class="helpNum" aria-hidden="true">5</span><span class="helpItemTitle">お知らせ</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel5" role="region" aria-labelledby="helpBtn5" hidden><ul><li>管理者からの連絡が、画面の真ん中に出ます。</li><li>読んだら「確認しました」を押します。押すまでは、開くたびに出ます。</li><li>一度押したお知らせは、もう出ません。もう一度読みたいときは、管理者（津波）に聞いてください。</li></ul></div>
+        </div>
+        <div class="helpItem">
+          <button type="button" class="helpItemBtn" id="helpBtn6" aria-expanded="false" aria-controls="helpPanel6"><span class="helpNum" aria-hidden="true">6</span><span class="helpItemTitle">困ったとき</span><svg class="helpChevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg></button>
+          <div class="helpPanel" id="helpPanel6" role="region" aria-labelledby="helpBtn6" hidden><ul><li>使い方が分からないとき、うまく動かないときは、管理者（津波）に連絡してください。</li><li>画面の写真を送るときは、他の人のメールアドレスや顧客名が写っていないか確かめてください。</li><li>画面が古いときは、30〜60秒ほど待つか、ページを読み込み直してください。</li></ul></div>
+        </div>
+      </div>
+      <div class="helpFooter">
+        <a class="helpLink" id="helpLink" href="https://claude.ai/artifact/7dQi5J7JJRJBWmCuxgWVQg" target="_blank" rel="noopener noreferrer">くわしい説明書を開く<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7 9"/></svg></a>
+        <span class="helpFootNote">別のタブで開きます</span>
+        <button type="button" id="helpCloseBtn">閉じる</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modalOverlay" id="masterModalOverlay" hidden>
     <div class="modalBox" style="width:960px;">
       <button type="button" class="modalCloseX" id="masterModalCloseX" aria-label="閉じる">×</button>
@@ -3066,6 +3160,25 @@
       if (e.key === 'Escape' && document.getElementById('drawer').classList.contains('open')) closeDrawer_();
       if (e.key === 'Escape' && !document.getElementById('reorderOverlay').hidden) closeReorderModal_();
     });
+    // 使い方の窓の開閉（関数本体は、下の「使い方の窓」の節）
+    document.getElementById('openHelpBtn').addEventListener('click', openHelp_);
+    document.getElementById('helpCloseX').addEventListener('click', closeHelp_);
+    document.getElementById('helpCloseBtn').addEventListener('click', closeHelp_);
+    document.getElementById('helpOverlay').addEventListener('click', function (e) {
+      if (e.target === this) closeHelp_(); // 窓の外側
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !document.getElementById('helpOverlay').hidden) closeHelp_();
+    });
+    document.querySelectorAll('#helpOverlay .helpItemBtn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+        helpCloseAll_();
+        if (wasOpen) return;
+        btn.setAttribute('aria-expanded', 'true');
+        document.getElementById(btn.getAttribute('aria-controls')).hidden = false;
+      });
+    });
     document.getElementById('openReorderBtn').addEventListener('click', openReorderModal_);
     document.getElementById('reorderDoneBtn').addEventListener('click', closeReorderModal_);
     document.getElementById('reorderResetBtn').addEventListener('click', resetOrder_);
@@ -4028,6 +4141,26 @@
       }).observe(el, { attributes: true, attributeFilter: ['hidden'] });
     });
   })();
+
+  // ==== 使い方の窓 ====
+  // 開く：☰メニューを閉じてから開く。項目は最初は全部閉じ、押した項目だけ開く（ほかは閉じる）。
+  // 閉じる：×・「閉じる」・窓の外・Esc。.modalOverlay なので、開いている間は他の窓と同じく、自動更新などは待つ
+  function helpCloseAll_() {
+    document.querySelectorAll('#helpOverlay .helpItemBtn').forEach(function (btn) {
+      btn.setAttribute('aria-expanded', 'false');
+      document.getElementById(btn.getAttribute('aria-controls')).hidden = true;
+    });
+  }
+  function openHelp_() {
+    closeDrawer_();
+    helpCloseAll_();
+    document.getElementById('helpScroll').scrollTop = 0;
+    document.getElementById('helpOverlay').hidden = false;
+    document.getElementById('helpCloseX').focus();
+  }
+  function closeHelp_() {
+    document.getElementById('helpOverlay').hidden = true;
+  }
 
   // ==== ☰ドロワー ====
   function openDrawer_() {
